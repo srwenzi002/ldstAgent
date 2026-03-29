@@ -1,0 +1,63 @@
+template_id: transport_jp_leadingsoft_v1
+sheet: 精算書（交通費）
+missing_strategy:
+  default: error
+single_fields:
+  - field_path: employee.department
+    cell: J4
+    allowed_values:
+      - 取締役会
+      - 営業部
+      - 管理部
+      - 開発本部
+      - ソリューション開発部
+      - プラットフォーム開発部
+      - カスタマサポートエンジニアリング部
+  - field_path: employee.employee_id
+    cell: N4
+  - field_path: employee.name
+    cell: S4
+items:
+  path: items
+  start_row: 9
+  max_rows: 18
+  row_stride: 2
+  fields:
+    travel_date:
+      column: A
+    purpose:
+      column: F
+      allowed_values:
+        - 営業活動
+        - 客先作業
+        - 研修・セミナー参加
+        - 深夜帰宅
+        - 接待関連
+        - その他会社業務
+    visit_place:
+      column: F
+      row_offset: 1
+      missing: blank
+    transport_mode:
+      column: K
+      allowed_values:
+        - 電車・バス
+        - タクシー
+    route_from:
+      column: P
+    route_to:
+      column: X
+    route_line:
+      column: P
+      row_offset: 1
+      missing: blank
+    one_way_amount:
+      column: AA
+    is_round_trip:
+      column: AD
+      missing: blank
+      true_value: "●"
+      false_value: ""
+    receipt_no:
+      column: AJ
+      missing: blank

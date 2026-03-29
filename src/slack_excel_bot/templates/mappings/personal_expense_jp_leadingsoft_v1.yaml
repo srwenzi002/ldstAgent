@@ -1,0 +1,138 @@
+template_id: personal_expense_jp_leadingsoft_v1
+sheet: 経費（個人）精算書
+missing_strategy:
+  default: error
+single_fields:
+  - field_path: employee.department
+    cell: J5
+    allowed_values:
+      - 取締役会
+      - 営業部
+      - 管理部
+      - 開発本部
+      - ソリューション開発部
+      - プラットフォーム開発部
+      - カスタマサポートエンジニアリング部
+  - field_path: employee.employee_id
+    cell: N5
+  - field_path: employee.name
+    cell: R5
+items:
+  path: items
+  start_row: 10
+  max_rows: 3
+  row_stride: 12
+  fields:
+    expense_date:
+      column: A
+    purpose:
+      column: J
+      allowed_values:
+        - 交際費
+        - 会議費
+        - 旅費交通費
+        - 通信費
+        - 消耗品費
+        - 図書費
+        - 福利厚生費＿レクレーション補助
+        - 福利厚生費＿社内福利厚生行事
+        - 福利厚生費＿健康診断
+        - 福利厚生費
+        - 他支払手数料
+        - 印紙税
+        - 他租税公課
+        - 水道光熱費
+        - 荷造運賃
+        - 諸会費
+        - 保険料
+        - 立替金＿LDNS
+        - 立替金
+        - その他
+    amount_jpy:
+      column: Y
+    payee_name:
+      column: A
+      row_offset: 2
+      missing: error
+    description:
+      column: I
+      row_offset: 2
+      missing: error
+    burden_department:
+      column: A
+      row_offset: 5
+      missing: error
+      allowed_values:
+        - 取締役会
+        - 営業部
+        - 管理部
+        - 開発本部
+        - ソリューション開発部
+        - プラットフォーム開発部
+        - カスタマサポートエンジニアリング部
+    project_code_name:
+      column: A
+      row_offset: 7
+      missing: error
+      allowed_values:
+        - "SD0001：SD部門経費"
+        - "PF0001：PF部門経費"
+        - "CSE001：CSE部門経費"
+        - "KH0001：開発本部部門経費"
+        - "BL0010：先端技術開発室"
+        - "BL0021：第一開発部"
+        - "BL0022：第二開発部"
+        - "BL0023：第三開発部"
+        - "BL0030：情報システム部"
+        - "SB0011：IoT(龍海)"
+        - "SB0012：IoT(張慈勇)"
+        - "SB0021：ダンプネット企画ph"
+        - "SB0022：ダンプネット開発"
+        - "SB0030：プラメBiz開発"
+        - "SB0041：データプラットフォーム開発"
+        - "SB0042：データプラットフォーム開発(南京)"
+        - "SB0050：どこかなGPSサーバ開発"
+        - "SB0061：API-Suite維持"
+        - "SB0062：API-SuiteマルチPF追加"
+        - "SB0071：アシストスマホ"
+        - "SB0072：アシストスマホ追加(下期)"
+        - "SB0081：EricssonGUI保守"
+        - "SB0082：EricssonGUI_Repla"
+        - "SB0083：Consolidator"
+        - "SB0084：EricssonGUIオンプレ"
+        - "SB0090：Apigee GKEバージョンアップ"
+        - "NC0010：NTTCom（アプリ保守）"
+        - "NC0020：NTTCom（開発)"
+        - "CW0010：NTTコムウェア"
+        - "DC0001：NTTドコモ(未記入)"
+        - "KD0010：KDDI（加治佐）"
+        - "KD0020：KDDI（裏隠居)"
+        - "OY0010：応用"
+        - "JM0010：JEMS"
+        - "SS0001：東京堂"
+        - "SS0002：中央物産"
+        - "SS0003：デジマース"
+        - "SS0004：BL_反社チェックAPI"
+        - "SS0005：インフォート"
+        - "KN0001：管理部所管経費"
+        - "AO0001：青戸寮関連"
+    counterparty_company:
+      column: L
+      row_offset: 8
+      missing: error
+    counterparty_attendees:
+      column: L
+      row_offset: 9
+      missing: error
+    counterparty_count:
+      column: AA
+      row_offset: 9
+      missing: error
+    internal_attendees:
+      column: L
+      row_offset: 10
+      missing: error
+    internal_count:
+      column: AA
+      row_offset: 10
+      missing: error

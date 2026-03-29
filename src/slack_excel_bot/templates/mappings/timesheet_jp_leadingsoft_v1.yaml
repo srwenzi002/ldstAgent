@@ -1,0 +1,161 @@
+template_id: timesheet_jp_leadingsoft_v1
+sheet: 勤務状況表
+missing_strategy:
+  default: blank
+  fields:
+    employee.employee_id: error
+    employee.name: error
+    items.day: error
+single_fields:
+  - field_path: employee.department_code
+    cell: AE3
+    missing: blank
+    value_type: int
+    allowed_values:
+      - "10"
+      - "20"
+      - "30"
+      - "50"
+      - "51"
+      - "52"
+      - "60"
+      - "70"
+      - 10
+      - 20
+      - 30
+      - 50
+      - 51
+      - 52
+      - 60
+      - 70
+  - field_path: employee.employee_id
+    cell: AE4
+  - field_path: employee.name
+    cell: AF4
+  - field_path: year
+    cell: AO3
+    missing: blank
+    value_type: int
+  - field_path: month
+    cell: AO4
+    missing: blank
+    value_type: int
+  - field_path: work_grade
+    cell: AE5
+    missing: blank
+    value_type: int
+    allowed_values:
+      - "1"
+      - "2"
+      - "3"
+      - "4"
+      - 1
+      - 2
+      - 3
+      - 4
+  - field_path: paid_leave_balance
+    cell: AD8
+    missing: blank
+    value_type: float
+items:
+  path: items
+  start_row: 12
+  max_rows: 31
+  row_stride: 1
+  row_index_mode: day_of_month
+  row_index_field: day
+  missing: blank
+  fields:
+    work_grade:
+      column: E
+      missing: blank
+      value_type: int
+      allowed_values:
+        - "1"
+        - "2"
+        - "3"
+        - "4"
+        - 1
+        - 2
+        - 3
+        - 4
+    clock_in:
+      column: F
+      missing: blank
+      value_type: time
+    clock_out:
+      column: G
+      missing: blank
+      value_type: time
+    special_note:
+      column: I
+      missing: blank
+      allowed_values:
+        - 無給休暇
+    leave_item_no:
+      column: K
+      missing: blank
+      value_type: int
+      allowed_values:
+        - "1"
+        - "2"
+        - "3"
+        - "4"
+        - "5"
+        - "6"
+        - "7"
+        - "8"
+        - "9"
+        - "10"
+        - "11"
+        - "12"
+        - "13"
+        - "14"
+        - "15"
+        - 1
+        - 2
+        - 3
+        - 4
+        - 5
+        - 6
+        - 7
+        - 8
+        - 9
+        - 10
+        - 11
+        - 12
+        - 13
+        - 14
+        - 15
+    private_out_start:
+      column: AN
+      missing: blank
+      value_type: time
+    private_out_end:
+      column: AO
+      missing: blank
+      value_type: time
+    short_work_hours:
+      column: AS
+      missing: blank
+      value_type: float
+    break2:
+      column: AV
+      missing: blank
+      value_type: time
+    break3:
+      column: AW
+      missing: blank
+      value_type: time
+    break4:
+      column: AX
+      missing: blank
+      value_type: time
+    break5:
+      column: AY
+      missing: blank
+      value_type: time
+    break6:
+      column: AZ
+      missing: blank
+      value_type: time
