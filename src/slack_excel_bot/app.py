@@ -21,12 +21,19 @@ async def run() -> None:
     settings.validate_runtime()
 
     slack_client = AsyncWebClient(token=settings.slack_bot_token or None)
+    auth = await slack_client.auth_test()
     tool_service = ExcelToolService(settings)
     agent = OpenAIExcelAgent(settings, tool_service)
-    bot = SlackExcelBot(slack_client, agent)
+    bot = SlackExcelBot(
+        slack_client,
+        agent,
+        bot_user_id=auth.get("user_id"),
+        bot_id=auth.get("bot_id"),
+    )
     socket_mode_runner = SlackSocketModeRunner(settings.slack_app_token, bot)
 
     logger.info("Starting Slack Excel Bot in Socket Mode")
+    logger.info("Authenticated as bot_user_id=%s bot_id=%s", auth.get("user_id"), auth.get("bot_id"))
     await socket_mode_runner.connect()
     logger.info("Socket Mode connected")
 

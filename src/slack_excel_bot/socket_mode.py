@@ -28,5 +28,4 @@ class SlackSocketModeRunner:
         await client.send_socket_mode_response(SocketModeResponse(envelope_id=request.envelope_id))
         payload: dict[str, Any] = request.payload or {}
         event = payload.get("event", {})
-        if event.get("type") == "message":
-            await self.bot.handle_event(event)
+        await self.bot.handle_socket_event(payload=payload, event=event)
