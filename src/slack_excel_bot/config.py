@@ -11,7 +11,6 @@ from dotenv import load_dotenv
 class Settings:
     slack_bot_token: str
     slack_app_token: str
-    slack_signing_secret: str
     openai_api_key: str
     openai_model: str
     port: int
@@ -34,7 +33,6 @@ class Settings:
         return cls(
             slack_bot_token=os.getenv("SLACK_BOT_TOKEN", "").strip(),
             slack_app_token=os.getenv("SLACK_APP_TOKEN", "").strip(),
-            slack_signing_secret=os.getenv("SLACK_SIGNING_SECRET", "").strip(),
             openai_api_key=(os.getenv("OPENAI_API_KEY") or os.getenv("EXPENSES_LLM_API_KEY") or "").strip(),
             openai_model=(os.getenv("OPENAI_MODEL") or os.getenv("EXPENSES_LLM_MODEL") or "gpt-4.1-mini").strip(),
             port=int(os.getenv("PORT", "3000")),
@@ -54,7 +52,7 @@ class Settings:
             missing.append("SLACK_BOT_TOKEN")
         if not self.openai_api_key:
             missing.append("OPENAI_API_KEY or EXPENSES_LLM_API_KEY")
-        if not self.slack_signing_secret and not self.slack_app_token:
-            missing.append("SLACK_SIGNING_SECRET or SLACK_APP_TOKEN")
+        if not self.slack_app_token:
+            missing.append("SLACK_APP_TOKEN")
         if missing:
             raise RuntimeError(f"Missing required environment variables: {', '.join(missing)}")

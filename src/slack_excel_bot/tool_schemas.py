@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class EmployeeInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     employee_id: str | None = Field(default=None, description="社員番号")
     name: str | None = Field(default=None, description="氏名")
     department: str | None = Field(default=None, description="部署名")
@@ -13,6 +16,8 @@ class EmployeeInput(BaseModel):
 
 
 class AttendanceDayOverride(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     day: int = Field(ge=1, le=31)
     work_grade: int | None = Field(default=None, ge=1, le=4)
     clock_in: str | None = Field(default=None, description="HH:MM")
@@ -22,6 +27,8 @@ class AttendanceDayOverride(BaseModel):
 
 
 class AttendanceSheetInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     year: int = Field(ge=2000, le=2100)
     month: int = Field(ge=1, le=12)
     employee: EmployeeInput | None = None
@@ -34,6 +41,8 @@ class AttendanceSheetInput(BaseModel):
 
 
 class TransportItemInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     travel_date: str = Field(description="YYYY-MM-DD")
     purpose: str
     visit_place: str | None = None
@@ -47,11 +56,15 @@ class TransportItemInput(BaseModel):
 
 
 class TransportSheetInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     employee: EmployeeInput | None = None
     items: list[TransportItemInput] = Field(min_length=1, max_length=18)
 
 
 class PersonalExpenseItemInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     expense_date: str = Field(description="YYYY-MM-DD")
     purpose: str
     amount_jpy: float
@@ -67,8 +80,29 @@ class PersonalExpenseItemInput(BaseModel):
 
 
 class PersonalExpenseSheetInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     employee: EmployeeInput | None = None
     items: list[PersonalExpenseItemInput] = Field(min_length=1, max_length=3)
+
+
+def _normalize_for_openai(schema: dict[str, Any]) -> dict[str, Any]:
+    normalized = deepcopy(schema)
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            if node.get("type") == "object" and "properties" in node:
+                properties = node.get("properties", {})
+                node["additionalProperties"] = False
+                node["required"] = list(properties.keys())
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    walk(normalized)
+    return normalized
 
 
 def openai_function_tool(name: str, description: str, model: type[BaseModel]) -> dict[str, Any]:
@@ -76,6 +110,6 @@ def openai_function_tool(name: str, description: str, model: type[BaseModel]) ->
         "type": "function",
         "name": name,
         "description": description,
-        "parameters": model.model_json_schema(),
+        "parameters": _normalize_for_openai(model.model_json_schema()),
         "strict": True,
     }

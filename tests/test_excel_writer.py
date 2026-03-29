@@ -15,7 +15,6 @@ def build_settings(tmp_path: Path) -> Settings:
     return Settings(
         slack_bot_token="xoxb-test",
         slack_app_token="xapp-test",
-        slack_signing_secret="secret",
         openai_api_key="sk-test",
         openai_model="gpt-4.1-mini",
         port=3000,

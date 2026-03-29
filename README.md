@@ -2,6 +2,8 @@
 
 这是一个全新的 Slack chatbot 项目，用来在 1 对 1 会话里读取用户输入的文字和图片，交给 OpenAI LLM 判断意图并调用 Excel 生成工具，最后把生成好的文件上传回 Slack 会话。
 
+当前项目只保留 `Socket Mode`，不再依赖 HTTP Events 回调。
+
 当前内置 3 个 Excel 工具：
 
 - `考勤表`
@@ -38,12 +40,8 @@ cp .env.example .env
 至少需要配置：
 
 - `SLACK_BOT_TOKEN`
+- `SLACK_APP_TOKEN`
 - `OPENAI_API_KEY` 或 `EXPENSES_LLM_API_KEY`
-
-Slack 接入满足下面一种即可：
-
-- HTTP Events：配置 `SLACK_SIGNING_SECRET`
-- Socket Mode：配置 `SLACK_APP_TOKEN`
 
 如果你的模板要求员工编号、姓名、部门这些固定字段，建议同时配置：
 
@@ -57,13 +55,13 @@ Slack 接入满足下面一种即可：
 3. 启动服务
 
 ```bash
-uvicorn slack_excel_bot.app:app --host 0.0.0.0 --port 3000
+python -m slack_excel_bot.app
 ```
 
 ## Slack App 配置建议
 
-- 开启 `Event Subscriptions`
-- Request URL 指向 `/slack/events`
+- 开启 `Socket Mode`
+- App-level token 需要 `connections:write`
 - 订阅事件：`message.im`
 - Bot Token Scopes 至少包含：
   - `chat:write`
@@ -71,8 +69,6 @@ uvicorn slack_excel_bot.app:app --host 0.0.0.0 --port 3000
   - `im:history`
   - `im:read`
   - `files:read`
-
-如果你已经配置了 `SLACK_APP_TOKEN`，项目现在也支持 Socket Mode。本地直接启动后会自动连 Slack，不需要把 `/slack/events` 暴露到公网。
 
 ## Excel 文件输出逻辑
 
@@ -104,6 +100,7 @@ src/slack_excel_bot/
   app.py
   config.py
   slack_bot.py
+  socket_mode.py
   openai_agent.py
   excel_tools.py
   excel_writer.py

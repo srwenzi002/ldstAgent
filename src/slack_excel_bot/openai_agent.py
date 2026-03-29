@@ -7,6 +7,7 @@ from typing import Any, Callable
 from openai import OpenAI
 
 from slack_excel_bot.config import Settings
+from slack_excel_bot.debug_trace import DebugTrace
 from slack_excel_bot.excel_tools import ExcelToolService
 from slack_excel_bot.tool_schemas import (
     AttendanceSheetInput,
@@ -50,7 +51,7 @@ class OpenAIExcelAgent:
             "generate_personal_expense_sheet": self.tool_service.generate_personal_expense_sheet,
         }
 
-    def run(self, conversation_input: list[dict[str, Any]]) -> AgentResult:
+    def run(self, conversation_input: list[dict[str, Any]], trace: DebugTrace | None = None) -> AgentResult:
         instructions = (
             "你是一个 Slack 助手。"
             "你需要根据用户在私聊中的文字和图片，判断是否需要生成 Excel。"
@@ -61,15 +62,28 @@ class OpenAIExcelAgent:
             "当工具已经成功生成文件后，用简洁中文告诉用户文件已准备好，不要伪造下载链接。"
         )
 
+        if trace is not None:
+            trace.write_section(
+                "openai_request_1",
+                {
+                    "model": self.settings.openai_model,
+                    "instructions": instructions,
+                    "input": conversation_input,
+                    "tools": self.tools,
+                },
+            )
+
         response = self.client.responses.create(
             model=self.settings.openai_model,
             instructions=instructions,
             input=conversation_input,
             tools=self.tools,
         )
+        if trace is not None:
+            trace.write_section("openai_response_1", response)
         generated_files: list[dict[str, Any]] = []
 
-        for _ in range(5):
+        for round_index in range(5):
             function_calls = [item for item in response.output if item.type == "function_call"]
             if not function_calls:
                 return AgentResult(text=response.output_text.strip() or "好的，我来处理。", generated_files=generated_files)
@@ -80,6 +94,15 @@ class OpenAIExcelAgent:
                 arguments = json.loads(call.arguments)
                 result = handler(arguments)
                 generated_files.append(result)
+                if trace is not None:
+                    trace.write_section(
+                        f"tool_call_{round_index + 1}_{call.name}",
+                        {
+                            "call_id": call.call_id,
+                            "arguments": arguments,
+                            "result": result,
+                        },
+                    )
                 tool_outputs.append(
                     {
                         "type": "function_call_output",
@@ -88,12 +111,25 @@ class OpenAIExcelAgent:
                     }
                 )
 
+            if trace is not None:
+                trace.write_section(
+                    f"openai_followup_request_{round_index + 2}",
+                    {
+                        "model": self.settings.openai_model,
+                        "previous_response_id": response.id,
+                        "input": tool_outputs,
+                        "tools": self.tools,
+                    },
+                )
+
             response = self.client.responses.create(
                 model=self.settings.openai_model,
                 previous_response_id=response.id,
                 input=tool_outputs,
                 tools=self.tools,
             )
+            if trace is not None:
+                trace.write_section(f"openai_followup_response_{round_index + 2}", response)
 
         return AgentResult(
             text="我已经处理了请求，但本轮工具调用次数达到上限，请检查输入后重试。",
