@@ -4,7 +4,7 @@ from openpyxl import load_workbook
 
 from slack_excel_bot.excel_tools import ExcelToolService
 from slack_excel_bot.config import Settings
-from slack_excel_bot.ekispert_client import EkispertMcpClient
+from slack_excel_bot.ekispert_client import EkispertError, EkispertMcpClient
 from slack_excel_bot.excel_writer import ExcelWriteError, ExcelWriter
 
 
@@ -486,3 +486,246 @@ def test_analyze_expense_evidence_transport_items_clear_missing_fields(tmp_path:
     assert result["transport_events"][1]["event_kind"] == "物販"
     assert result["transport_items"][0]["transport_mode"] == "電車・バス"
     assert result["transport_items"][1]["one_way_amount"] == 252
+
+
+def test_transport_route_batch_lookup_returns_match_and_candidates(tmp_path: Path) -> None:
+    settings = build_settings(tmp_path)
+    service = ExcelToolService(settings)
+
+    class StubClient:
+        def search_route_options(self, *, route_from: str, route_to: str, top_k: int, travel_date: str | None):
+            assert top_k == 2
+            return [
+                type(
+                    "StubOption",
+                    (),
+                    {
+                        "as_dict": lambda self: {
+                            "option_id": "1",
+                            "route_summary": f"{route_from} -> {route_to}",
+                            "route_line": f"{route_from} -> 路線A -> {route_to}",
+                            "one_way_amount": 272,
+                            "total_minutes": 18,
+                            "transfer_count": 0,
+                        }
+                    },
+                )(),
+                type(
+                    "StubOption",
+                    (),
+                    {
+                        "as_dict": lambda self: {
+                            "option_id": "2",
+                            "route_summary": f"{route_from} -> {route_to}",
+                            "route_line": f"{route_from} -> 路線B -> {route_to}",
+                            "one_way_amount": 310,
+                            "total_minutes": 24,
+                            "transfer_count": 1,
+                        }
+                    },
+                )(),
+            ]
+
+    service.ekispert_client = StubClient()
+
+    result = service.lookup_transport_route_batch(
+        {
+            "items": [
+                {
+                    "travel_date": "2026-03-27",
+                    "route_from": "青砥",
+                    "route_to": "京成上野",
+                    "one_way_amount": 272,
+                    "route_line": None,
+                }
+            ],
+            "top_k": 2,
+        }
+    )
+
+    assert result["title"] == "交通路线批量查询结果"
+    assert result["items"][0]["matched_option"]["one_way_amount"] == 272
+    assert result["items"][0]["final_one_way_amount"] == 272
+    assert result["items"][0]["match_type"] == "exact"
+    assert result["items"][0]["should_prompt_user"] is False
+    assert result["resolved_items"][0]["route_line"] == "青砥 -> 路線A -> 京成上野"
+    assert len(result["items"][0]["options"]) == 2
+
+
+def test_transport_route_batch_lookup_tolerates_single_item_failure(tmp_path: Path) -> None:
+    settings = build_settings(tmp_path)
+    service = ExcelToolService(settings)
+
+    class StubClient:
+        def search_route_options(self, *, route_from: str, route_to: str, top_k: int, travel_date: str | None):
+            if route_from == "八景":
+                raise EkispertError('{"status": 400, "message": "駅名が見つかりません。(八景)"}')
+            return [
+                type(
+                    "StubOption",
+                    (),
+                    {
+                        "as_dict": lambda self: {
+                            "option_id": "1",
+                            "route_summary": f"{route_from} -> {route_to}",
+                            "route_line": f"{route_from} -> 路線A -> {route_to}",
+                            "one_way_amount": 272,
+                            "total_minutes": 18,
+                            "transfer_count": 0,
+                        }
+                    },
+                )()
+            ]
+
+    service.ekispert_client = StubClient()
+
+    result = service.lookup_transport_route_batch(
+        {
+            "items": [
+                {
+                    "travel_date": "2026-03-27",
+                    "route_from": "八景",
+                    "route_to": "青砥",
+                    "one_way_amount": None,
+                    "route_line": None,
+                },
+                {
+                    "travel_date": "2026-03-27",
+                    "route_from": "青砥",
+                    "route_to": "京成上野",
+                    "one_way_amount": 272,
+                    "route_line": None,
+                },
+            ],
+            "top_k": 2,
+        }
+    )
+
+    assert result["ok"] is True
+    assert result["has_partial_failures"] is True
+    assert result["items"][0]["status"] == "query_error"
+    assert "八景" in result["items"][0]["error"]
+    assert result["items"][1]["status"] == "ok"
+
+
+def test_transport_route_batch_lookup_uses_image_amount_for_near_ic_fare(tmp_path: Path) -> None:
+    settings = build_settings(tmp_path)
+    service = ExcelToolService(settings)
+
+    class StubClient:
+        def search_route_options(self, *, route_from: str, route_to: str, top_k: int, travel_date: str | None):
+            return [
+                type(
+                    "StubOption",
+                    (),
+                    {
+                        "as_dict": lambda self: {
+                            "option_id": "1",
+                            "route_summary": f"{route_from} -> {route_to}",
+                            "route_line": f"{route_from} -> 直通 -> {route_to}",
+                            "one_way_amount": 280,
+                            "total_minutes": 25,
+                            "transfer_count": 0,
+                        }
+                    },
+                )(),
+                type(
+                    "StubOption",
+                    (),
+                    {
+                        "as_dict": lambda self: {
+                            "option_id": "2",
+                            "route_summary": f"{route_from} -> {route_to}",
+                            "route_line": f"{route_from} -> 迂回 -> {route_to}",
+                            "one_way_amount": 360,
+                            "total_minutes": 33,
+                            "transfer_count": 1,
+                        }
+                    },
+                )(),
+            ]
+
+    service.ekispert_client = StubClient()
+
+    result = service.lookup_transport_route_batch(
+        {
+            "items": [
+                {
+                    "travel_date": "2026-03-27",
+                    "route_from": "京成上野",
+                    "route_to": "青砥",
+                    "one_way_amount": 272,
+                    "route_line": None,
+                }
+            ],
+            "top_k": 3,
+        }
+    )
+
+    assert result["items"][0]["match_type"] == "near_ic_fare"
+    assert result["items"][0]["matched_option"]["one_way_amount"] == 280
+    assert result["items"][0]["final_one_way_amount"] == 272
+    assert result["items"][0]["should_prompt_user"] is False
+    assert result["resolved_items"][0]["route_line"] == "京成上野 -> 直通 -> 青砥"
+
+
+def test_transport_route_batch_lookup_prompts_when_multiple_close_candidates_exist(tmp_path: Path) -> None:
+    settings = build_settings(tmp_path)
+    service = ExcelToolService(settings)
+
+    class StubClient:
+        def search_route_options(self, *, route_from: str, route_to: str, top_k: int, travel_date: str | None):
+            return [
+                type(
+                    "StubOption",
+                    (),
+                    {
+                        "as_dict": lambda self: {
+                            "option_id": "1",
+                            "route_summary": f"{route_from} -> {route_to}",
+                            "route_line": f"{route_from} -> 路線A -> {route_to}",
+                            "one_way_amount": 210,
+                            "total_minutes": 21,
+                            "transfer_count": 0,
+                        }
+                    },
+                )(),
+                type(
+                    "StubOption",
+                    (),
+                    {
+                        "as_dict": lambda self: {
+                            "option_id": "2",
+                            "route_summary": f"{route_from} -> {route_to}",
+                            "route_line": f"{route_from} -> 路線B -> {route_to}",
+                            "one_way_amount": 209,
+                            "total_minutes": 22,
+                            "transfer_count": 0,
+                        }
+                    },
+                )(),
+            ]
+
+    service.ekispert_client = StubClient()
+
+    result = service.lookup_transport_route_batch(
+        {
+            "items": [
+                {
+                    "travel_date": "2026-03-22",
+                    "route_from": "浅草橋",
+                    "route_to": "千駄ケ谷",
+                    "one_way_amount": 209,
+                    "route_line": None,
+                }
+            ],
+            "top_k": 3,
+        }
+    )
+
+    assert result["items"][0]["matched_option"] is None
+    assert result["items"][0]["recommended_option"]["one_way_amount"] == 209
+    assert result["items"][0]["should_prompt_user"] is True
+    assert result["items"][0]["prompt_reason"] == "multiple_close_candidates"
+    assert len(result["resolved_items"]) == 0
+    assert len(result["needs_confirmation"]) == 1

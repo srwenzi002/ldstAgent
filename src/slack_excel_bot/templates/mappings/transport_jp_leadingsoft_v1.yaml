@@ -46,7 +46,7 @@ items:
     route_from:
       column: P
     route_to:
-      column: X
+      column: T
     route_line:
       column: P
       row_offset: 1

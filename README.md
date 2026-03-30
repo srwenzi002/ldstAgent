@@ -10,11 +10,6 @@
 - `交通费精算表`
 - `个人报销计算表`
 
-另外，票据/截图场景现在支持两个查询型工具：
-
-- `票据/截图分析（文本+图片，多模态 LLM）`
-- `交通路线候选查询（Ekispert MCP）`
-
 项目只复用了旧项目中与 Excel 模板填充直接相关的部分：模板文件、模板映射思路和 writer 行为。Slack 流程、OpenAI 调用和整体架构都是在当前目录重新实现的。
 
 ## 能力范围
@@ -23,8 +18,6 @@
 - 读取用户消息文字
 - 读取用户上传的图片，并把图片内容传给 OpenAI 模型
 - 让模型通过 tool calling 选择 3 个 Excel 工具之一
-- 当交通费信息不完整时，先查询候选路线和金额，再让用户确认
-- 当用户发送截图、发票或小票时，先判断是交通费还是个人报销，再抽取对应字段
 - 工具把 JSON 参数转换成 Excel 文件
 - 生成完成后把文件上传回原对话
 
@@ -36,6 +29,12 @@
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
+
+
+cd /Users/srwenzi/workspace/ldstAgent
+source .venv/bin/activate
+python -m slack_excel_bot.app
+
 ```
 
 2. 配置环境变量
@@ -49,7 +48,6 @@ cp .env.example .env
 - `SLACK_BOT_TOKEN`
 - `SLACK_APP_TOKEN`
 - `OPENAI_API_KEY` 或 `EXPENSES_LLM_API_KEY`
-- `EXPENSES_EKISPERT_API_TOKEN`（如果要启用交通路线金额查询）
 
 如果你的模板要求员工编号、姓名、部门这些固定字段，建议同时配置：
 
@@ -100,8 +98,6 @@ python -m slack_excel_bot.app
 - Excel 生成器作为函数工具暴露给模型
 
 因此像“帮我根据这张交通记录截图做交通费精算表”这种请求，模型可以直接看到截图并决定调用 `交通费精算表` 工具。
-
-对于“昨天从青物横丁到浜松町，帮我做交通费精算”这类信息不完整的请求，模型会先分析证据并判断这是交通费；如果金额或线路仍不明确，再调用 Ekispert MCP 查询候选路线和单程金额，最后把候选列给用户确认，确认后才生成最终 Excel。
 
 ## 目录结构
 

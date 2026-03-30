@@ -115,6 +115,27 @@ class TransportRouteLookupInput(BaseModel):
     top_k: int | None = Field(default=3, ge=1, le=5, description="返回候选路线数量，默认 3。")
 
 
+class TransportRouteBatchLookupItemInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    travel_date: str = Field(description="出行日期。YYYY-MM-DD。")
+    route_from: str = Field(description="出发站名。")
+    route_to: str = Field(description="到达站名。")
+    one_way_amount: float | None = Field(default=None, description="图片识别到的单程金额。没有时填 null。")
+    route_line: str | None = Field(default=None, description="图片识别到的线路描述。没有时填 null。")
+
+
+class TransportRouteBatchLookupInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[TransportRouteBatchLookupItemInput] = Field(
+        min_length=1,
+        max_length=18,
+        description="需要批量查询或校验的交通明细。",
+    )
+    top_k: int | None = Field(default=3, ge=1, le=5, description="每条明细最多返回多少候选，默认 3。")
+
+
 class TransportEvidenceItemInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

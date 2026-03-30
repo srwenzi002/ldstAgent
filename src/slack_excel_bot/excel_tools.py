@@ -13,6 +13,7 @@ from slack_excel_bot.tool_schemas import (
     ExpenseEvidenceAnalysisInput,
     EmployeeInput,
     PersonalExpenseSheetInput,
+    TransportRouteBatchLookupInput,
     TransportRouteLookupInput,
     TransportSheetInput,
 )
@@ -35,6 +36,8 @@ class GeneratedWorkbook:
 
 
 class ExcelToolService:
+    FARE_TOLERANCE_JPY = 10.0
+
     def __init__(self, settings: Settings):
         package_dir = Path(__file__).resolve().parent
         self.settings = settings
@@ -94,6 +97,87 @@ class ExcelToolService:
             "route_from": args.route_from,
             "route_to": args.route_to,
             "options": [option.as_dict() for option in options],
+        }
+
+    def lookup_transport_route_batch(self, raw_args: dict[str, Any]) -> dict[str, Any]:
+        args = TransportRouteBatchLookupInput.model_validate(raw_args)
+        if self.ekispert_client is None:
+            raise EkispertError("EXPENSES_EKISPERT_API_TOKEN is not configured.")
+
+        results: list[dict[str, Any]] = []
+        resolved_items: list[dict[str, Any]] = []
+        needs_confirmation: list[dict[str, Any]] = []
+        any_success = False
+        for index, item in enumerate(args.items, start=1):
+            base_result = {
+                "item_id": str(index),
+                "travel_date": item.travel_date,
+                "route_from": item.route_from,
+                "route_to": item.route_to,
+                "image_one_way_amount": item.one_way_amount,
+                "image_route_line": item.route_line,
+            }
+            try:
+                options = self.ekispert_client.search_route_options(
+                    route_from=item.route_from,
+                    route_to=item.route_to,
+                    top_k=args.top_k or 3,
+                    travel_date=item.travel_date,
+                )
+                option_dicts = [option.as_dict() for option in options]
+                match_summary = self._summarize_route_match(
+                    image_one_way_amount=item.one_way_amount,
+                    options=option_dicts,
+                )
+                result_item = {
+                    **base_result,
+                    "status": "ok",
+                    **match_summary,
+                    "options": option_dicts,
+                    "error": None,
+                }
+                results.append(result_item)
+                if result_item["matched_option"] is not None and not result_item["should_prompt_user"]:
+                    resolved_items.append(
+                        {
+                            "travel_date": item.travel_date,
+                            "purpose": None,
+                            "visit_place": None,
+                            "transport_mode": "電車・バス",
+                            "route_from": item.route_from,
+                            "route_to": item.route_to,
+                            "route_line": result_item["matched_option"]["route_line"],
+                            "one_way_amount": result_item["final_one_way_amount"],
+                            "is_round_trip": False,
+                            "receipt_no": None,
+                        }
+                    )
+                else:
+                    needs_confirmation.append(result_item)
+                any_success = True
+            except EkispertError as exc:
+                failed_item = {
+                    **base_result,
+                    "status": "query_error",
+                    "matched_option": None,
+                    "recommended_option": None,
+                    "final_one_way_amount": item.one_way_amount,
+                    "match_type": "query_error",
+                    "should_prompt_user": True,
+                    "prompt_reason": "query_error",
+                    "options": [],
+                    "error": str(exc),
+                }
+                results.append(failed_item)
+                needs_confirmation.append(failed_item)
+
+        return {
+            "ok": any_success,
+            "title": "交通路线批量查询结果",
+            "has_partial_failures": any(item["status"] != "ok" for item in results),
+            "resolved_items": resolved_items,
+            "needs_confirmation": needs_confirmation,
+            "items": results,
         }
 
     def analyze_expense_evidence(self, raw_args: dict[str, Any]) -> dict[str, Any]:
@@ -167,3 +251,75 @@ class ExcelToolService:
             required_fields = ("expense_date", "amount_jpy", "payee_name")
             return [field for field in required_fields if values.get(field) in (None, "", [])]
         return []
+
+    @classmethod
+    def _summarize_route_match(
+        cls,
+        *,
+        image_one_way_amount: float | None,
+        options: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        ranked_options = sorted(
+            options,
+            key=lambda option: (
+                int(option.get("transfer_count") or 99),
+                int(option.get("total_minutes") or 999),
+                float(option.get("one_way_amount") or 999999),
+            ),
+        )
+        if image_one_way_amount is None:
+            recommended_option = ranked_options[0] if ranked_options else None
+            return {
+                "match_type": "no_image_amount",
+                "matched_option": None,
+                "recommended_option": recommended_option,
+                "final_one_way_amount": recommended_option["one_way_amount"] if recommended_option else None,
+                "should_prompt_user": recommended_option is None,
+                "prompt_reason": "missing_image_amount" if recommended_option else "no_route_candidates",
+            }
+
+        tolerance_matches = [
+            option
+            for option in ranked_options
+            if abs(float(option["one_way_amount"]) - float(image_one_way_amount)) <= cls.FARE_TOLERANCE_JPY
+        ]
+        tolerance_matches.sort(
+            key=lambda option: (
+                abs(float(option["one_way_amount"]) - float(image_one_way_amount)),
+                int(option.get("transfer_count") or 99),
+                int(option.get("total_minutes") or 999),
+                float(option.get("one_way_amount") or 999999),
+            )
+        )
+
+        if not tolerance_matches:
+            recommended_option = ranked_options[0] if ranked_options else None
+            return {
+                "match_type": "unmatched",
+                "matched_option": None,
+                "recommended_option": recommended_option,
+                "final_one_way_amount": image_one_way_amount,
+                "should_prompt_user": True,
+                "prompt_reason": "fare_out_of_tolerance",
+            }
+
+        best_option = tolerance_matches[0]
+        ambiguous = len(tolerance_matches) > 1 and cls._options_are_similar(best_option, tolerance_matches[1])
+        return {
+            "match_type": "exact"
+            if float(best_option["one_way_amount"]) == float(image_one_way_amount)
+            else "near_ic_fare",
+            "matched_option": None if ambiguous else best_option,
+            "recommended_option": best_option,
+            "final_one_way_amount": image_one_way_amount,
+            "should_prompt_user": ambiguous,
+            "prompt_reason": "multiple_close_candidates" if ambiguous else None,
+        }
+
+    @staticmethod
+    def _options_are_similar(first: dict[str, Any], second: dict[str, Any]) -> bool:
+        return (
+            abs(float(first["one_way_amount"]) - float(second["one_way_amount"])) <= 10
+            and abs(int(first.get("transfer_count") or 99) - int(second.get("transfer_count") or 99)) <= 1
+            and abs(int(first.get("total_minutes") or 999) - int(second.get("total_minutes") or 999)) <= 10
+        )

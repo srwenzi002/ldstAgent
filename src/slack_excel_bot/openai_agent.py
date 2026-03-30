@@ -15,6 +15,7 @@ from slack_excel_bot.tool_schemas import (
     AttendanceSheetInput,
     ExpenseEvidenceAnalysisInput,
     PersonalExpenseSheetInput,
+    TransportRouteBatchLookupInput,
     TransportRouteLookupInput,
     TransportSheetInput,
     openai_function_tool,
@@ -66,6 +67,17 @@ class OpenAIExcelAgent:
                 ExpenseEvidenceAnalysisInput,
             ),
             openai_function_tool(
+                "lookup_transport_route_batch",
+                (
+                    "批量查询或校验多条交通明细的路线与金额候选。"
+                    "当 analyze_expense_evidence 从图片里识别出多条 transport_items 时，优先调用此工具。"
+                    "它可以把图片识别出的起终点、日期送去 Ekispert 查询，并返回每条明细的匹配候选。"
+                    "如果图片识别的金额刚好命中某个候选，可以优先采用 matched_option。"
+                    "如果没有命中，先把候选列给用户确认，不要直接生成 Excel。"
+                ),
+                TransportRouteBatchLookupInput,
+            ),
+            openai_function_tool(
                 "lookup_transport_route_options",
                 (
                     "查询交通路线与金额候选。"
@@ -114,6 +126,7 @@ class OpenAIExcelAgent:
         self.handlers: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
             "generate_attendance_sheet": self.tool_service.generate_attendance_sheet,
             "analyze_expense_evidence": self.tool_service.analyze_expense_evidence,
+            "lookup_transport_route_batch": self.tool_service.lookup_transport_route_batch,
             "lookup_transport_route_options": self.tool_service.lookup_transport_route_options,
             "generate_transport_sheet": self.tool_service.generate_transport_sheet,
             "generate_personal_expense_sheet": self.tool_service.generate_personal_expense_sheet,
@@ -139,7 +152,11 @@ class OpenAIExcelAgent:
             "当用户发送图片、截图、发票、小票时，先调用 analyze_expense_evidence 来判断这是交通费还是个人报销，或者是否无法判断。"
             "对于交通卡履历截图，先识别 transport_events，再判断哪些事件属于可报销乘车，哪些只是 物販、定、窓出 或无法报销的原始记录。"
             "其中 定 不是自动排除项；它可能是定期区间中的进站或出站线索，需要结合相邻事件和跨图上下文判断。"
-            "如果 analyze_expense_evidence 识别出了 transport_items，说明一张图里已经抽出了多条交通明细；这时优先直接生成包含多条 items 的交通费精算表。"
+            "如果 analyze_expense_evidence 识别出了 transport_items，不要直接绕过旧逻辑；先调用 lookup_transport_route_batch，用 Ekispert 校验或补全这些图片识别出的明细。"
+            "如果 batch 查询返回了 resolved_items，优先直接用这些 resolved_items 调用 generate_transport_sheet。"
+            "如果 batch 查询中某条有 matched_option，优先用 matched_option 的路线；但 Excel 里的金额仍优先保留图片或用户提供的金额。"
+            "如果 batch 查询中某条没有 matched_option，但候选很明确，可以请用户确认；如果有多种可能，也先展示候选编号给用户。"
+            "当图片或用户已经提供了交通金额时，Excel 里的 one_way_amount 应优先保留用户金额；Ekispert 金额主要用于路线校验，不要把用户的 IC 金额改写成现金票价。"
             "如果 transport_events 很多，但只有一部分能可靠形成 transport_items，就只生成那一部分，并在回复里明确说明哪些事件未纳入。"
             "如果 analyze_expense_evidence 判断为 transport，且已经抽到 travel_date、route_from、route_to、one_way_amount，就可以直接调用 generate_transport_sheet。"
             "如果 analyze_expense_evidence 判断为 transport，但缺少明确金额、路线或线路名，再调用 lookup_transport_route_options。"
