@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 
 from slack_excel_bot.config import Settings
@@ -22,6 +23,7 @@ def build_settings(tmp_path: Path) -> Settings:
         default_work_grade=1,
         default_clock_in="09:00",
         default_clock_out="18:00",
+        max_concurrent_requests=50,
     )
 
 
@@ -30,6 +32,45 @@ def build_bot(tmp_path: Path) -> SlackExcelBot:
     tool_service = ExcelToolService(settings)
     agent = OpenAIExcelAgent(settings, tool_service)
     return SlackExcelBot(slack_client=None, agent=agent, bot_user_id="UBOT", bot_id="BBOT")  # type: ignore[arg-type]
+
+
+def test_thread_lock_is_scoped_by_thread_ts(tmp_path: Path) -> None:
+    bot = build_bot(tmp_path)
+
+    first = bot._get_thread_lock("thread-1")
+    second = bot._get_thread_lock("thread-1")
+    third = bot._get_thread_lock("thread-2")
+
+    assert first is second
+    assert first is not third
+
+
+def test_handle_socket_event_schedules_message_in_background(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        bot = build_bot(tmp_path)
+        scheduled: list[str] = []
+
+        async def fake_handle(event, payload):
+            scheduled.append(f"{event['ts']}:{payload['event']['type']}")
+
+        bot._handle_message_event_with_limits = fake_handle  # type: ignore[method-assign]
+
+        payload = {"event": {"type": "message"}}
+        event = {
+            "type": "message",
+            "channel_type": "im",
+            "user": "U123",
+            "channel": "D123",
+            "ts": "123.456",
+            "text": "hello",
+        }
+
+        await bot.handle_socket_event(payload, event)
+        await asyncio.sleep(0)
+
+        assert scheduled == ["123.456:message"]
+
+    asyncio.run(scenario())
 
 
 def test_should_not_skip_image_file_share_message(tmp_path: Path) -> None:

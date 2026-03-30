@@ -32,7 +32,6 @@ class OpenAIExcelAgent:
     def __init__(self, settings: Settings, tool_service: ExcelToolService):
         self.settings = settings
         self.tool_service = tool_service
-        self.client = OpenAI(api_key=settings.openai_api_key)
         self.tools = [
             openai_function_tool(
                 "generate_attendance_sheet",
@@ -133,6 +132,7 @@ class OpenAIExcelAgent:
         }
 
     def run(self, conversation_input: list[dict[str, Any]], trace: DebugTrace | None = None) -> AgentResult:
+        client = OpenAI(api_key=self.settings.openai_api_key)
         today_jst = datetime.now(ZoneInfo("Asia/Tokyo")).date()
         instructions = (
             "你是一个 Slack 助手。"
@@ -182,7 +182,7 @@ class OpenAIExcelAgent:
                 },
             )
 
-        response = self.client.responses.create(
+        response = client.responses.create(
             model=self.settings.openai_model,
             instructions=instructions,
             input=conversation_input,
@@ -232,7 +232,7 @@ class OpenAIExcelAgent:
                     },
                 )
 
-            response = self.client.responses.create(
+            response = client.responses.create(
                 model=self.settings.openai_model,
                 instructions=instructions,
                 previous_response_id=response.id,

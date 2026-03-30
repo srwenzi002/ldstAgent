@@ -28,6 +28,7 @@ def build_settings(tmp_path: Path) -> Settings:
         default_work_grade=1,
         default_clock_in="09:00",
         default_clock_out="18:00",
+        max_concurrent_requests=50,
     )
 
 

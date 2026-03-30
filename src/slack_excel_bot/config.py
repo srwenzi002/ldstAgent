@@ -23,6 +23,7 @@ class Settings:
     default_work_grade: int
     default_clock_in: str
     default_clock_out: str
+    max_concurrent_requests: int
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -48,6 +49,7 @@ class Settings:
             default_work_grade=int(os.getenv("DEFAULT_WORK_GRADE", "1")),
             default_clock_in=os.getenv("DEFAULT_CLOCK_IN", "09:00").strip(),
             default_clock_out=os.getenv("DEFAULT_CLOCK_OUT", "18:00").strip(),
+            max_concurrent_requests=int(os.getenv("MAX_CONCURRENT_REQUESTS", "50")),
         )
 
     def validate_runtime(self) -> None:

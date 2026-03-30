@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 import mimetypes
@@ -24,12 +25,16 @@ class SlackExcelBot:
         *,
         bot_user_id: str | None = None,
         bot_id: str | None = None,
+        max_concurrent_requests: int = 50,
     ):
         self.slack_client = slack_client
         self.agent = agent
         self.bot_user_id = bot_user_id
         self.bot_id = bot_id
         self.thread_contexts: dict[str, dict[str, Any]] = {}
+        self._request_semaphore = asyncio.Semaphore(max_concurrent_requests)
+        self._thread_locks: dict[str, asyncio.Lock] = {}
+        self._background_tasks: set[asyncio.Task[Any]] = set()
 
     async def handle_socket_event(self, payload: dict[str, Any], event: dict[str, Any]) -> None:
         event_type = event.get("type")
@@ -40,7 +45,7 @@ class SlackExcelBot:
             await self.handle_assistant_thread_context_changed(event, payload)
             return
         if event_type == "message":
-            await self.handle_message_event(event, payload)
+            self._start_background_task(self._handle_message_event_with_limits(event, payload))
 
     async def handle_assistant_thread_started(self, event: dict[str, Any], payload: dict[str, Any]) -> None:
         thread_info = self._extract_thread_info(event)
@@ -60,6 +65,12 @@ class SlackExcelBot:
         channel, thread_ts = thread_info
         self.thread_contexts.setdefault(thread_ts, {}).update({"context_changed_event": event, "payload": payload})
         logger.info("Assistant thread context changed channel=%s thread_ts=%s", channel, thread_ts)
+
+    async def _handle_message_event_with_limits(self, event: dict[str, Any], payload: dict[str, Any]) -> None:
+        thread_ts = event.get("thread_ts") or event.get("ts") or "unknown-thread"
+        async with self._request_semaphore:
+            async with self._get_thread_lock(thread_ts):
+                await self.handle_message_event(event, payload)
 
     async def handle_message_event(self, event: dict[str, Any], payload: dict[str, Any]) -> None:
         trace: DebugTrace | None = None
@@ -86,7 +97,7 @@ class SlackExcelBot:
             await self._safe_set_status(channel, thread_ts, "is thinking...", ["正在理解你的请求", "正在整理上下文"])
             conversation_input = await self._build_openai_input(event=event, trace=trace)
             trace.write_section("conversation_input", conversation_input)
-            result = self.agent.run(conversation_input, trace=trace)
+            result = await asyncio.to_thread(self.agent.run, conversation_input, trace)
             trace.write_section("agent_result", {"text": result.text, "generated_files": result.generated_files})
 
             for item in result.generated_files:
@@ -121,6 +132,25 @@ class SlackExcelBot:
                 )
             logger.exception("Failed to handle Slack event")
             raise
+
+    def _get_thread_lock(self, thread_ts: str) -> asyncio.Lock:
+        lock = self._thread_locks.get(thread_ts)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._thread_locks[thread_ts] = lock
+        return lock
+
+    def _start_background_task(self, coroutine: Any) -> None:
+        task = asyncio.create_task(coroutine)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._finalize_background_task)
+
+    def _finalize_background_task(self, task: asyncio.Task[Any]) -> None:
+        self._background_tasks.discard(task)
+        try:
+            task.result()
+        except Exception:
+            logger.exception("Background Slack event task failed")
 
     async def _build_openai_input(self, event: dict[str, Any], trace: DebugTrace | None = None) -> list[dict[str, Any]]:
         channel = event["channel"]

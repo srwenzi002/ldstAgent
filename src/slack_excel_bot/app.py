@@ -29,6 +29,7 @@ async def run() -> None:
         agent,
         bot_user_id=auth.get("user_id"),
         bot_id=auth.get("bot_id"),
+        max_concurrent_requests=settings.max_concurrent_requests,
     )
     socket_mode_runner = SlackSocketModeRunner(settings.slack_app_token, bot)
 
