@@ -115,6 +115,110 @@ class TransportRouteLookupInput(BaseModel):
     top_k: int | None = Field(default=3, ge=1, le=5, description="返回候选路线数量，默认 3。")
 
 
+class TransportEvidenceItemInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    travel_date: str = Field(description="识别出的出行日期。YYYY-MM-DD。")
+    route_from: str = Field(description="识别出的出发站或地点。")
+    route_to: str = Field(description="识别出的到达站或地点。")
+    one_way_amount: float = Field(description="识别出的单程金额。")
+    route_line: str | None = Field(default=None, description="识别出的线路描述。无法确定时填 null。")
+    transport_mode: Literal["電車・バス", "タクシー"] | None = Field(
+        default=None,
+        description="识别出的交通方式。无法确定时填 null。",
+    )
+    is_round_trip: bool | None = Field(default=None, description="是否往返。无法确定时填 null。")
+    purpose: Literal[
+        "営業活動",
+        "客先作業",
+        "研修・セミナー参加",
+        "深夜帰宅",
+        "接待関連",
+        "その他会社業務",
+    ] | None = Field(default=None, description="识别出的出行目的。无法确定时填 null。")
+    confidence: Literal["high", "medium", "low"] = Field(description="该条交通明细的置信度。")
+    notes: str | None = Field(default=None, description="该条明细的说明，例如是否由入/出记录配对推断。")
+
+
+class TransportLedgerEventInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    travel_date: str = Field(description="履历事件日期。YYYY-MM-DD。")
+    event_kind: Literal["入", "出", "窓出", "物販", "定", "charge", "other"] = Field(
+        description="交通卡履历中的原始事件类型。注意：定 不能直接丢弃，它可能代表定期区间相关的进站或出站事件。"
+    )
+    event_role: Literal["entry", "exit", "pass_entry_or_exit", "shopping", "adjustment", "charge", "unknown"] | None = (
+        Field(
+            default=None,
+            description=(
+                "对该原始事件的业务解释。"
+                "入 通常对应 entry，出 通常对应 exit，"
+                "定 可以填写 pass_entry_or_exit，表示它可能是定期区间相关的进/出站事件，不能轻易舍弃。"
+            ),
+        )
+    )
+    station_or_merchant: str | None = Field(default=None, description="站名或商户名。无法确定时填 null。")
+    amount_jpy: float | None = Field(default=None, description="该事件对应的金额；无法确定时填 null。")
+    balance_jpy: float | None = Field(default=None, description="如果能看出余额则填写；无法确定时填 null。")
+    paired_group: str | None = Field(
+        default=None,
+        description="如果模型认为若干事件属于同一次行程，可用同一个任意字符串分组；无法判断时填 null。",
+    )
+    confidence: Literal["high", "medium", "low"] = Field(description="该条原始事件识别的置信度。")
+    notes: str | None = Field(default=None, description="该条原始事件的补充说明。")
+
+
+class ExpenseEvidenceAnalysisInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expense_type: Literal["transport", "personal_expense", "unknown"] = Field(
+        description="图片或图文内容对应的精算类型。"
+    )
+    document_kind: Literal["transport_screenshot", "receipt", "invoice", "unknown"] = Field(
+        description="识别到的票据或截图类型。"
+    )
+    travel_date: str | None = Field(default=None, description="交通出行日期。YYYY-MM-DD；无法确定时填 null。")
+    route_from: str | None = Field(default=None, description="交通场景中的出发站或地点。无法确定时填 null。")
+    route_to: str | None = Field(default=None, description="交通场景中的到达站或地点。无法确定时填 null。")
+    route_line: str | None = Field(default=None, description="交通场景中的线路描述。无法确定时填 null。")
+    one_way_amount: float | None = Field(default=None, description="交通场景中的单程金额。无法确定时填 null。")
+    transport_events: list[TransportLedgerEventInput] = Field(
+        default_factory=list,
+        description="如果图片像交通卡履历截图，请尽量先逐条抽出原始事件，包含 入/出/物販/定 等。",
+    )
+    transport_items: list[TransportEvidenceItemInput] = Field(
+        default_factory=list,
+        description="如果一张交通截图里能可靠识别出多条乘车记录，就逐条输出在这里。",
+    )
+    transport_mode: Literal["電車・バス", "タクシー"] | None = Field(
+        default=None,
+        description="交通场景中的交通方式。公共交通统一为 電車・バス；无法确定时填 null。",
+    )
+    is_round_trip: bool | None = Field(default=None, description="交通场景中是否往返。无法确定时填 null。")
+    purpose: Literal[
+        "営業活動",
+        "客先作業",
+        "研修・セミナー参加",
+        "深夜帰宅",
+        "接待関連",
+        "その他会社業務",
+    ] | None = Field(default=None, description="交通场景中的出行目的。无法确定时填 null。")
+    expense_date: str | None = Field(default=None, description="个人报销场景中的发生日期。YYYY-MM-DD；无法确定时填 null。")
+    amount_jpy: float | None = Field(default=None, description="个人报销场景中的金额。无法确定时填 null。")
+    payee_name: str | None = Field(default=None, description="个人报销场景中的支付对象或商户名称。无法确定时填 null。")
+    description: str | None = Field(default=None, description="个人报销场景中的费用说明。无法确定时填 null。")
+    confidence: Literal["high", "medium", "low"] = Field(description="本次识别的整体置信度。")
+    evidence_sources: list[Literal["text", "image"]] = Field(
+        default_factory=list,
+        description="本次识别依赖的证据来源，可包含 text、image。",
+    )
+    missing_fields: list[str] = Field(
+        default_factory=list,
+        description="当前仍缺失、会阻碍后续生成对应精算表的字段名列表。",
+    )
+    notes: str | None = Field(default=None, description="补充说明，例如冲突、歧义或不确定点。没有时填 null。")
+
+
 class PersonalExpenseItemInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

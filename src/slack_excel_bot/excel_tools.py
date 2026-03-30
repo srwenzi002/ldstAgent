@@ -10,6 +10,7 @@ from slack_excel_bot.excel_writer import DraftWriteResult, ExcelWriter
 from slack_excel_bot.tool_schemas import (
     AttendanceDayOverride,
     AttendanceSheetInput,
+    ExpenseEvidenceAnalysisInput,
     EmployeeInput,
     PersonalExpenseSheetInput,
     TransportRouteLookupInput,
@@ -95,6 +96,23 @@ class ExcelToolService:
             "options": [option.as_dict() for option in options],
         }
 
+    def analyze_expense_evidence(self, raw_args: dict[str, Any]) -> dict[str, Any]:
+        args = ExpenseEvidenceAnalysisInput.model_validate(raw_args)
+        payload = args.model_dump(mode="json")
+        payload["missing_fields"] = self._normalize_missing_expense_fields(payload)
+        if payload.get("expense_type") == "transport" and payload.get("transport_mode") is None and (
+            payload.get("route_from") or payload.get("route_to") or payload.get("route_line")
+        ):
+            payload["transport_mode"] = "電車・バス"
+        for item in payload.get("transport_items", []):
+            if item.get("transport_mode") is None:
+                item["transport_mode"] = "電車・バス"
+        return {
+            "ok": True,
+            "title": "票据分析结果",
+            **payload,
+        }
+
     def generate_personal_expense_sheet(self, raw_args: dict[str, Any]) -> dict[str, Any]:
         args = PersonalExpenseSheetInput.model_validate(raw_args)
         payload = {
@@ -131,3 +149,21 @@ class ExcelToolService:
         if "is_round_trip" not in values or values["is_round_trip"] is None:
             values["is_round_trip"] = False
         return values
+
+    @staticmethod
+    def _normalize_missing_expense_fields(values: dict[str, Any]) -> list[str]:
+        expense_type = values.get("expense_type")
+        if expense_type == "transport":
+            transport_items = values.get("transport_items") or []
+            if transport_items:
+                return []
+            required_fields = ("travel_date", "route_from", "route_to", "one_way_amount")
+            missing = [field for field in required_fields if values.get(field) in (None, "", [])]
+            route_hint_present = values.get("route_line") not in (None, "")
+            if values.get("one_way_amount") is None and not route_hint_present and "route_line" not in missing:
+                missing.append("route_line")
+            return missing
+        if expense_type == "personal_expense":
+            required_fields = ("expense_date", "amount_jpy", "payee_name")
+            return [field for field in required_fields if values.get(field) in (None, "", [])]
+        return []

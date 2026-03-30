@@ -64,26 +64,7 @@ class SlackExcelBot:
     async def handle_message_event(self, event: dict[str, Any], payload: dict[str, Any]) -> None:
         trace: DebugTrace | None = None
         try:
-            if event.get("channel_type") != "im":
-                return
-            if event.get("subtype") in {
-                "bot_message",
-                "message_changed",
-                "message_deleted",
-                "assistant_app_thread",
-                "channel_join",
-                "file_share",
-            }:
-                return
-            if event.get("bot_id") == self.bot_id:
-                logger.info("Skipping self bot_id event channel=%s ts=%s", event.get("channel"), event.get("ts"))
-                return
-            if event.get("user") == self.bot_user_id:
-                logger.info("Skipping self user event channel=%s ts=%s", event.get("channel"), event.get("ts"))
-                return
-            if not event.get("user"):
-                return
-            if not (event.get("text") or event.get("files")):
+            if self._should_skip_message_event(event):
                 return
 
             channel = event["channel"]
@@ -175,7 +156,7 @@ class SlackExcelBot:
                     content.append({"type": "output_text", "text": text})
                 else:
                     content.append({"type": "input_text", "text": text})
-            if index == len(messages) - 1:
+            if role == "user":
                 content.extend(await self._load_image_inputs(message.get("files", [])))
             if content:
                 openai_messages.append({"role": role, "content": content})
@@ -296,3 +277,26 @@ class SlackExcelBot:
         if channel and thread_ts:
             return channel, thread_ts
         return None
+
+    def _should_skip_message_event(self, event: dict[str, Any]) -> bool:
+        if event.get("channel_type") != "im":
+            return True
+        if event.get("subtype") in {
+            "bot_message",
+            "message_changed",
+            "message_deleted",
+            "assistant_app_thread",
+            "channel_join",
+        }:
+            return True
+        if event.get("bot_id") == self.bot_id:
+            logger.info("Skipping self bot_id event channel=%s ts=%s", event.get("channel"), event.get("ts"))
+            return True
+        if event.get("user") == self.bot_user_id:
+            logger.info("Skipping self user event channel=%s ts=%s", event.get("channel"), event.get("ts"))
+            return True
+        if not event.get("user"):
+            return True
+        if not (event.get("text") or event.get("files")):
+            return True
+        return False

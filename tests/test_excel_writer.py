@@ -335,3 +335,154 @@ def test_transport_route_lookup_returns_structured_options(tmp_path: Path) -> No
     assert result["title"] == "交通路线候选"
     assert result["options"][0]["one_way_amount"] == 350
     assert result["options"][0]["transfer_count"] == 1
+
+
+def test_analyze_expense_evidence_transport_fills_missing_fields_and_default_mode(tmp_path: Path) -> None:
+    settings = build_settings(tmp_path)
+    service = ExcelToolService(settings)
+
+    result = service.analyze_expense_evidence(
+        {
+            "expense_type": "transport",
+            "document_kind": "transport_screenshot",
+            "travel_date": "2026-03-29",
+            "route_from": "青物横丁",
+            "route_to": "浜松町",
+            "route_line": None,
+            "one_way_amount": None,
+            "transport_mode": None,
+            "is_round_trip": None,
+            "purpose": None,
+            "expense_date": None,
+            "amount_jpy": None,
+            "payee_name": None,
+            "description": None,
+            "confidence": "medium",
+            "evidence_sources": ["text", "image"],
+            "missing_fields": [],
+            "notes": "截图里没看清金额",
+        }
+    )
+
+    assert result["title"] == "票据分析结果"
+    assert result["transport_mode"] == "電車・バス"
+    assert result["missing_fields"] == ["one_way_amount", "route_line"]
+    assert result["evidence_sources"] == ["text", "image"]
+
+
+def test_analyze_expense_evidence_personal_expense_uses_personal_fields(tmp_path: Path) -> None:
+    settings = build_settings(tmp_path)
+    service = ExcelToolService(settings)
+
+    result = service.analyze_expense_evidence(
+        {
+            "expense_type": "personal_expense",
+            "document_kind": "receipt",
+            "travel_date": None,
+            "route_from": None,
+            "route_to": None,
+            "route_line": None,
+            "one_way_amount": None,
+            "transport_mode": None,
+            "is_round_trip": None,
+            "purpose": None,
+            "expense_date": "2026-03-29",
+            "amount_jpy": 1200,
+            "payee_name": "コンビニA",
+            "description": "文房具購入",
+            "confidence": "high",
+            "evidence_sources": ["image"],
+            "missing_fields": ["travel_date"],
+            "notes": None,
+        }
+    )
+
+    assert result["missing_fields"] == []
+    assert result["amount_jpy"] == 1200
+    assert result["expense_type"] == "personal_expense"
+    assert result["confidence"] == "high"
+
+
+def test_analyze_expense_evidence_transport_items_clear_missing_fields(tmp_path: Path) -> None:
+    settings = build_settings(tmp_path)
+    service = ExcelToolService(settings)
+
+    result = service.analyze_expense_evidence(
+        {
+            "expense_type": "transport",
+            "document_kind": "transport_screenshot",
+            "travel_date": None,
+            "route_from": None,
+            "route_to": None,
+            "route_line": None,
+            "one_way_amount": None,
+            "transport_events": [
+                {
+                    "travel_date": "2026-03-21",
+                    "event_kind": "定",
+                    "event_role": "pass_entry_or_exit",
+                    "station_or_merchant": "青物横丁",
+                    "amount_jpy": -510,
+                    "balance_jpy": 2553,
+                    "paired_group": None,
+                    "confidence": "medium",
+                    "notes": "定期関連イベントなので通常の片道精算対象外",
+                },
+                {
+                    "travel_date": "2026-03-22",
+                    "event_kind": "物販",
+                    "event_role": "shopping",
+                    "station_or_merchant": None,
+                    "amount_jpy": -500,
+                    "balance_jpy": 1844,
+                    "paired_group": None,
+                    "confidence": "medium",
+                    "notes": "物販は交通費ではない",
+                },
+            ],
+            "transport_items": [
+                {
+                    "travel_date": "2026-03-15",
+                    "route_from": "押上",
+                    "route_to": "青砥",
+                    "one_way_amount": 199,
+                    "route_line": None,
+                    "transport_mode": None,
+                    "is_round_trip": None,
+                    "purpose": None,
+                    "confidence": "medium",
+                    "notes": "入/出记录配对推断",
+                },
+                {
+                    "travel_date": "2026-03-15",
+                    "route_from": "新高円寺",
+                    "route_to": "茅場町",
+                    "one_way_amount": 252,
+                    "route_line": None,
+                    "transport_mode": None,
+                    "is_round_trip": None,
+                    "purpose": None,
+                    "confidence": "medium",
+                    "notes": "入/出记录配对推断",
+                },
+            ],
+            "transport_mode": None,
+            "is_round_trip": None,
+            "purpose": None,
+            "expense_date": None,
+            "amount_jpy": None,
+            "payee_name": None,
+            "description": None,
+            "confidence": "medium",
+            "evidence_sources": ["image"],
+            "missing_fields": ["travel_date"],
+            "notes": "来自交通卡履历截图",
+        }
+    )
+
+    assert result["missing_fields"] == []
+    assert result["transport_events"][0]["event_kind"] == "定"
+    assert result["transport_events"][0]["event_role"] == "pass_entry_or_exit"
+    assert result["transport_events"][1]["event_kind"] == "物販"
+    assert result["transport_items"][0]["transport_mode"] == "電車・バス"
+    assert result["transport_items"][1]["one_way_amount"] == 252

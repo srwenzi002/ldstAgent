@@ -13,6 +13,7 @@ from slack_excel_bot.debug_trace import DebugTrace
 from slack_excel_bot.excel_tools import ExcelToolService
 from slack_excel_bot.tool_schemas import (
     AttendanceSheetInput,
+    ExpenseEvidenceAnalysisInput,
     PersonalExpenseSheetInput,
     TransportRouteLookupInput,
     TransportSheetInput,
@@ -44,6 +45,25 @@ class OpenAIExcelAgent:
                     "不要提供 schema 之外的字段。"
                 ),
                 AttendanceSheetInput,
+            ),
+            openai_function_tool(
+                "analyze_expense_evidence",
+                (
+                    "从用户的文字和图片中分析这是一张什么票据或截图，并抽取对应的精算字段。"
+                    "这是一个通用分析工具，不生成 Excel，也不查询外部路线。"
+                    "图片可能是交通截图，也可能是个人报销相关的发票或小票。"
+                    "请先判断 expense_type 是 transport、personal_expense 还是 unknown，再只填写有证据支持的字段。"
+                    "没有把握的金额、日期、线路、商户名都必须填 null，不要猜。"
+                    "如果图片是 Suica/PASMO 等交通卡的履历截图，请优先逐条填写 transport_events，保留原始事件类型，例如 入、出、窓出、物販、定。"
+                    "只有当某些原始事件能够被可靠地解释成可报销的乘车记录时，才把它们进一步汇总到 transport_items。"
+                    "不要把 物販 误当成普通乘车明细。"
+                    "定 不能直接舍弃；它可能表示定期区间相关的进站或出站事件，应先保留在 transport_events，并在需要时参与前后记录的推断。"
+                    "如果记录跨多张截图连续出现，可以结合多张图片一起判断。"
+                    "当 transport_items 已经足够完整时，不要再保守地只填一个 top-level 的单条交通字段。"
+                    "如果图片和文字都参与了判断，evidence_sources 要同时包含 text 和 image。"
+                    "missing_fields 中请列出还缺哪些关键字段。"
+                ),
+                ExpenseEvidenceAnalysisInput,
             ),
             openai_function_tool(
                 "lookup_transport_route_options",
@@ -93,6 +113,7 @@ class OpenAIExcelAgent:
         ]
         self.handlers: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
             "generate_attendance_sheet": self.tool_service.generate_attendance_sheet,
+            "analyze_expense_evidence": self.tool_service.analyze_expense_evidence,
             "lookup_transport_route_options": self.tool_service.lookup_transport_route_options,
             "generate_transport_sheet": self.tool_service.generate_transport_sheet,
             "generate_personal_expense_sheet": self.tool_service.generate_personal_expense_sheet,
@@ -115,9 +136,20 @@ class OpenAIExcelAgent:
             "对于交通费精算表：如果用户没有说明 purpose，默认用 営業活動。"
             "如果用户描述了一次移动但没有明确说往返或片道，默认按片道处理。"
             "如果用户说 电车、地铁、公交 等公共交通，都归类到 電車・バス。"
-            "如果用户要做交通费精算，但没有提供明确金额、路线或线路名，先调用 lookup_transport_route_options。"
+            "当用户发送图片、截图、发票、小票时，先调用 analyze_expense_evidence 来判断这是交通费还是个人报销，或者是否无法判断。"
+            "对于交通卡履历截图，先识别 transport_events，再判断哪些事件属于可报销乘车，哪些只是 物販、定、窓出 或无法报销的原始记录。"
+            "其中 定 不是自动排除项；它可能是定期区间中的进站或出站线索，需要结合相邻事件和跨图上下文判断。"
+            "如果 analyze_expense_evidence 识别出了 transport_items，说明一张图里已经抽出了多条交通明细；这时优先直接生成包含多条 items 的交通费精算表。"
+            "如果 transport_events 很多，但只有一部分能可靠形成 transport_items，就只生成那一部分，并在回复里明确说明哪些事件未纳入。"
+            "如果 analyze_expense_evidence 判断为 transport，且已经抽到 travel_date、route_from、route_to、one_way_amount，就可以直接调用 generate_transport_sheet。"
+            "如果 analyze_expense_evidence 判断为 transport，但缺少明确金额、路线或线路名，再调用 lookup_transport_route_options。"
+            "如果 analyze_expense_evidence 判断为 personal_expense，请继续收集个人报销所需字段，再调用 generate_personal_expense_sheet。"
+            "如果 analyze_expense_evidence 判断为 unknown，不要贸然生成表格，先向用户确认这是交通费还是个人报销。"
             "拿到交通候选后，优先用中文列出候选编号、路线、单程金额、时长和换乘次数，请用户回复编号确认。"
             "只有当用户已经明确确认某一个交通候选，或者自己明确给出金额和路线时，才调用 generate_transport_sheet。"
+            "如果图片里金额清楚、站名清楚，优先信任图片识别出的金额，不必再查 Ekispert。"
+            "如果图片和文字冲突，请先向用户确认，不要擅自决定。"
+            "对于只有月日没有年份的交通截图，如果没有相反证据，优先按当前日本日期所在年份推断。"
             "当工具已经成功生成文件后，用简洁中文告诉用户文件已准备好，不要伪造下载链接。"
             "不要向用户暴露任何内部 JSON、函数参数、工具返回对象、文件路径或系统字段。"
         )
