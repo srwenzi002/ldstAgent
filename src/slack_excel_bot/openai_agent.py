@@ -14,6 +14,7 @@ from slack_excel_bot.excel_tools import ExcelToolService
 from slack_excel_bot.tool_schemas import (
     AttendanceSheetInput,
     PersonalExpenseSheetInput,
+    TransportRouteLookupInput,
     TransportSheetInput,
     openai_function_tool,
 )
@@ -43,6 +44,17 @@ class OpenAIExcelAgent:
                     "不要提供 schema 之外的字段。"
                 ),
                 AttendanceSheetInput,
+            ),
+            openai_function_tool(
+                "lookup_transport_route_options",
+                (
+                    "查询交通路线与金额候选。"
+                    "当用户想做交通费精算，但没有提供准确路线、线路名或金额时，优先调用此工具。"
+                    "参数中的日期必须是绝对日期 YYYY-MM-DD。"
+                    "route_from 和 route_to 应尽量只填写站名，不要加入多余说明。"
+                    "拿到候选后，先用自然语言列出 2-3 个候选给用户确认，不要立刻生成 Excel。"
+                ),
+                TransportRouteLookupInput,
             ),
             openai_function_tool(
                 "generate_transport_sheet",
@@ -81,6 +93,7 @@ class OpenAIExcelAgent:
         ]
         self.handlers: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
             "generate_attendance_sheet": self.tool_service.generate_attendance_sheet,
+            "lookup_transport_route_options": self.tool_service.lookup_transport_route_options,
             "generate_transport_sheet": self.tool_service.generate_transport_sheet,
             "generate_personal_expense_sheet": self.tool_service.generate_personal_expense_sheet,
         }
@@ -102,6 +115,9 @@ class OpenAIExcelAgent:
             "对于交通费精算表：如果用户没有说明 purpose，默认用 営業活動。"
             "如果用户描述了一次移动但没有明确说往返或片道，默认按片道处理。"
             "如果用户说 电车、地铁、公交 等公共交通，都归类到 電車・バス。"
+            "如果用户要做交通费精算，但没有提供明确金额、路线或线路名，先调用 lookup_transport_route_options。"
+            "拿到交通候选后，优先用中文列出候选编号、路线、单程金额、时长和换乘次数，请用户回复编号确认。"
+            "只有当用户已经明确确认某一个交通候选，或者自己明确给出金额和路线时，才调用 generate_transport_sheet。"
             "当工具已经成功生成文件后，用简洁中文告诉用户文件已准备好，不要伪造下载链接。"
             "不要向用户暴露任何内部 JSON、函数参数、工具返回对象、文件路径或系统字段。"
         )
@@ -137,7 +153,8 @@ class OpenAIExcelAgent:
                 handler = self.handlers[call.name]
                 arguments = json.loads(call.arguments)
                 result = handler(arguments)
-                generated_files.append(result)
+                if result.get("output_path"):
+                    generated_files.append(result)
                 if trace is not None:
                     trace.write_section(
                         f"tool_call_{round_index + 1}_{call.name}",
@@ -183,8 +200,10 @@ class OpenAIExcelAgent:
 
     @staticmethod
     def _tool_result_summary(result: dict[str, Any]) -> dict[str, Any]:
-        return {
-            "ok": True,
-            "title": result.get("title"),
-            "message": "Excel 文件已生成，系统会自动上传到当前 Slack 会话。",
-        }
+        if result.get("output_path"):
+            return {
+                "ok": True,
+                "title": result.get("title"),
+                "message": "Excel 文件已生成，系统会自动上传到当前 Slack 会话。",
+            }
+        return result

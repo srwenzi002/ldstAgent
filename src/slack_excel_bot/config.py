@@ -13,6 +13,7 @@ class Settings:
     slack_app_token: str
     openai_api_key: str
     openai_model: str
+    ekispert_api_token: str
     port: int
     storage_dir: Path
     default_employee_name: str
@@ -35,6 +36,9 @@ class Settings:
             slack_app_token=os.getenv("SLACK_APP_TOKEN", "").strip(),
             openai_api_key=(os.getenv("OPENAI_API_KEY") or os.getenv("EXPENSES_LLM_API_KEY") or "").strip(),
             openai_model=(os.getenv("OPENAI_MODEL") or os.getenv("EXPENSES_LLM_MODEL") or "gpt-4.1-mini").strip(),
+            ekispert_api_token=(
+                os.getenv("EXPENSES_EKISPERT_API_TOKEN") or os.getenv("EKISPERT_API_ACCESS_KEY") or ""
+            ).strip(),
             port=int(os.getenv("PORT", "3000")),
             storage_dir=storage_dir,
             default_employee_name=os.getenv("DEFAULT_EMPLOYEE_NAME", "氏名未設定").strip(),

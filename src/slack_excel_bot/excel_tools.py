@@ -5,12 +5,14 @@ from pathlib import Path
 from typing import Any
 
 from slack_excel_bot.config import Settings
+from slack_excel_bot.ekispert_client import EkispertError, EkispertMcpClient
 from slack_excel_bot.excel_writer import DraftWriteResult, ExcelWriter
 from slack_excel_bot.tool_schemas import (
     AttendanceDayOverride,
     AttendanceSheetInput,
     EmployeeInput,
     PersonalExpenseSheetInput,
+    TransportRouteLookupInput,
     TransportSheetInput,
 )
 
@@ -36,6 +38,9 @@ class ExcelToolService:
         package_dir = Path(__file__).resolve().parent
         self.settings = settings
         self.writer = ExcelWriter(package_dir=package_dir, draft_dir=settings.storage_dir / "drafts")
+        self.ekispert_client = (
+            EkispertMcpClient(settings.ekispert_api_token) if settings.ekispert_api_token else None
+        )
 
     def generate_attendance_sheet(self, raw_args: dict[str, Any]) -> dict[str, Any]:
         args = AttendanceSheetInput.model_validate(raw_args)
@@ -69,6 +74,26 @@ class ExcelToolService:
             title="交通费精算表",
             payload=payload,
         ).as_tool_output()
+
+    def lookup_transport_route_options(self, raw_args: dict[str, Any]) -> dict[str, Any]:
+        args = TransportRouteLookupInput.model_validate(raw_args)
+        if self.ekispert_client is None:
+            raise EkispertError("EXPENSES_EKISPERT_API_TOKEN is not configured.")
+
+        options = self.ekispert_client.search_route_options(
+            route_from=args.route_from,
+            route_to=args.route_to,
+            top_k=args.top_k or 3,
+            travel_date=args.travel_date,
+        )
+        return {
+            "ok": True,
+            "title": "交通路线候选",
+            "travel_date": args.travel_date,
+            "route_from": args.route_from,
+            "route_to": args.route_to,
+            "options": [option.as_dict() for option in options],
+        }
 
     def generate_personal_expense_sheet(self, raw_args: dict[str, Any]) -> dict[str, Any]:
         args = PersonalExpenseSheetInput.model_validate(raw_args)

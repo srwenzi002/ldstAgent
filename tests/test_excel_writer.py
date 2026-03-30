@@ -4,6 +4,7 @@ from openpyxl import load_workbook
 
 from slack_excel_bot.excel_tools import ExcelToolService
 from slack_excel_bot.config import Settings
+from slack_excel_bot.ekispert_client import EkispertMcpClient
 from slack_excel_bot.excel_writer import ExcelWriteError, ExcelWriter
 
 
@@ -17,6 +18,7 @@ def build_settings(tmp_path: Path) -> Settings:
         slack_app_token="xapp-test",
         openai_api_key="sk-test",
         openai_model="gpt-4.1-mini",
+        ekispert_api_token="ek-test",
         port=3000,
         storage_dir=tmp_path,
         default_employee_name="山田太郎",
@@ -254,3 +256,82 @@ def test_personal_expense_tool_generates_workbook(tmp_path: Path) -> None:
     assert ws["Y10"].value == 5500
     assert ws["A12"].value == "渋谷カフェ"
     assert ws["I12"].value == "顧客打合せの飲食代"
+
+
+def test_ekispert_route_parser_extracts_candidates() -> None:
+    payload = {
+        "ResultSet": {
+            "Course": [
+                {
+                    "Teiki": {"DisplayRoute": "青物横丁--京急本線--品川--ＪＲ山手線内回り--浜松町"},
+                    "Price": [
+                        {"kind": "FareSummary", "Oneway": "350", "Round": "700"},
+                    ],
+                    "Route": {
+                        "timeOnBoard": "10",
+                        "timeOther": "12",
+                        "timeWalk": "0",
+                        "transferCount": "1",
+                        "Point": [
+                            {"Station": {"Name": "青物横丁"}},
+                            {"Station": {"Name": "品川"}},
+                            {"Station": {"Name": "浜松町"}},
+                        ],
+                    },
+                }
+            ]
+        }
+    }
+
+    options = EkispertMcpClient._parse_route_options(payload, top_k=3)
+
+    assert len(options) == 1
+    assert options[0].route_line == "青物横丁 -> 京急本線 -> 品川 -> ＪＲ山手線内回り -> 浜松町"
+    assert options[0].route_summary == "青物横丁 -> 品川 -> 浜松町"
+    assert options[0].one_way_amount == 350
+    assert options[0].total_minutes == 22
+    assert options[0].transfer_count == 1
+
+
+def test_transport_route_lookup_returns_structured_options(tmp_path: Path) -> None:
+    settings = build_settings(tmp_path)
+    service = ExcelToolService(settings)
+
+    class StubClient:
+        def search_route_options(self, *, route_from: str, route_to: str, top_k: int, travel_date: str | None):
+            assert route_from == "青物横丁"
+            assert route_to == "浜松町"
+            assert top_k == 2
+            assert travel_date == "2026-03-29"
+            return [
+                type(
+                    "StubOption",
+                    (),
+                    {
+                        "as_dict": lambda self: {
+                            "option_id": "1",
+                            "route_summary": "青物横丁 -> 品川 -> 浜松町",
+                            "route_line": "青物横丁 -> 京急本線 -> 品川 -> ＪＲ山手線内回り -> 浜松町",
+                            "one_way_amount": 350,
+                            "total_minutes": 22,
+                            "transfer_count": 1,
+                        }
+                    },
+                )()
+            ]
+
+    service.ekispert_client = StubClient()
+
+    result = service.lookup_transport_route_options(
+        {
+            "travel_date": "2026-03-29",
+            "route_from": "青物横丁",
+            "route_to": "浜松町",
+            "top_k": 2,
+        }
+    )
+
+    assert result["ok"] is True
+    assert result["title"] == "交通路线候选"
+    assert result["options"][0]["one_way_amount"] == 350
+    assert result["options"][0]["transfer_count"] == 1

@@ -106,6 +106,15 @@ class TransportSheetInput(BaseModel):
     )
 
 
+class TransportRouteLookupInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    travel_date: str = Field(description="出行日期。YYYY-MM-DD。")
+    route_from: str = Field(description="出发站名。")
+    route_to: str = Field(description="到达站名。")
+    top_k: int | None = Field(default=3, ge=1, le=5, description="返回候选路线数量，默认 3。")
+
+
 class PersonalExpenseItemInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
