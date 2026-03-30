@@ -64,23 +64,46 @@ class AttendanceSheetInput(BaseModel):
 class TransportItemInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    travel_date: str = Field(description="YYYY-MM-DD")
-    purpose: str
-    visit_place: str | None = None
-    transport_mode: str
-    route_from: str
-    route_to: str
-    route_line: str | None = None
-    one_way_amount: float
-    is_round_trip: bool = False
-    receipt_no: str | None = None
+    travel_date: str = Field(description="乘车或出行日期。YYYY-MM-DD。")
+    purpose: Literal[
+        "営業活動",
+        "客先作業",
+        "研修・セミナー参加",
+        "深夜帰宅",
+        "接待関連",
+        "その他会社業務",
+    ] | None = Field(
+        default=None,
+        description=(
+            "出行目的。必须使用模板中的精确值。"
+            "可选值: 営業活動, 客先作業, 研修・セミナー参加, 深夜帰宅, 接待関連, その他会社業務。"
+            "如果用户没有说明，允许留空，程序会默认补成 営業活動。"
+        )
+    )
+    visit_place: str | None = Field(default=None, description="访问地点、客户地点或目的地名称。没有时可省略。")
+    transport_mode: Literal["電車・バス", "タクシー"] = Field(
+        description="交通手段。只能是 電車・バス 或 タクシー。"
+    )
+    route_from: str = Field(description="出发地。")
+    route_to: str = Field(description="到达地。")
+    route_line: str | None = Field(default=None, description="线路名。比如 JR山手線、東京メトロ銀座線。没有时可省略。")
+    one_way_amount: float = Field(description="单程金额，单位日元。")
+    is_round_trip: bool | None = Field(
+        default=None,
+        description="是否往返。未说明时允许留空，程序会默认补成 true。",
+    )
+    receipt_no: str | None = Field(default=None, description="领收书编号或票据编号。没有时可省略。")
 
 
 class TransportSheetInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     employee: EmployeeInput | None = None
-    items: list[TransportItemInput] = Field(min_length=1, max_length=18)
+    items: list[TransportItemInput] = Field(
+        min_length=1,
+        max_length=18,
+        description="交通费明细。1张表最多 18 条。",
+    )
 
 
 class PersonalExpenseItemInput(BaseModel):

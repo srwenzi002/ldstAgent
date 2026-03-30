@@ -60,7 +60,7 @@ class ExcelToolService:
         args = TransportSheetInput.model_validate(raw_args)
         payload = {
             "employee": self._merge_employee_defaults(args.employee),
-            "items": [item.model_dump(mode="json", exclude_none=True) for item in args.items],
+            "items": [self._normalize_transport_item(item) for item in args.items],
         }
         result = self.writer.write_draft("transport_jp_leadingsoft_v1", payload)
         return GeneratedWorkbook(
@@ -97,3 +97,12 @@ class ExcelToolService:
         items = [item.model_dump(mode="json", exclude_none=True) for item in args.days]
         items.sort(key=lambda item: int(item["day"]))
         return items
+
+    @staticmethod
+    def _normalize_transport_item(item) -> dict[str, Any]:
+        values = item.model_dump(mode="json", exclude_none=True)
+        if not values.get("purpose"):
+            values["purpose"] = "営業活動"
+        if "is_round_trip" not in values or values["is_round_trip"] is None:
+            values["is_round_trip"] = False
+        return values

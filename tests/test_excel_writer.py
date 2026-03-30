@@ -64,6 +64,81 @@ def test_transport_writer_generates_workbook(tmp_path: Path) -> None:
     assert ws["AD9"].value == "●"
 
 
+def test_transport_tool_generates_workbook(tmp_path: Path) -> None:
+    settings = build_settings(tmp_path)
+    service = ExcelToolService(settings)
+
+    result = service.generate_transport_sheet(
+        {
+            "employee": {
+                "department": "ソリューション開発部",
+                "department_code": "51",
+                "employee_id": "0001",
+                "name": "山田太郎",
+            },
+            "items": [
+                {
+                    "travel_date": "2026-03-10",
+                    "purpose": "客先作業",
+                    "visit_place": "渋谷オフィス",
+                    "transport_mode": "電車・バス",
+                    "route_from": "新宿",
+                    "route_to": "渋谷",
+                    "route_line": "JR山手線",
+                    "one_way_amount": 178,
+                    "is_round_trip": True,
+                    "receipt_no": "R-001",
+                }
+            ],
+        }
+    )
+    wb = load_workbook(result["output_path"])
+    ws = wb["精算書（交通費）"]
+
+    assert ws["J4"].value == "ソリューション開発部"
+    assert ws["N4"].value == "0001"
+    assert ws["S4"].value == "山田太郎"
+    assert ws["F9"].value == "客先作業"
+    assert ws["K9"].value == "電車・バス"
+    assert ws["AA9"].value == 178
+    assert ws["AD9"].value == "●"
+
+
+def test_transport_tool_applies_default_purpose_and_round_trip(tmp_path: Path) -> None:
+    settings = build_settings(tmp_path)
+    service = ExcelToolService(settings)
+
+    result = service.generate_transport_sheet(
+        {
+            "employee": {
+                "department": "ソリューション開発部",
+                "department_code": "51",
+                "employee_id": "0001",
+                "name": "山田太郎",
+            },
+            "items": [
+                {
+                    "travel_date": "2026-03-29",
+                    "purpose": None,
+                    "visit_place": None,
+                    "transport_mode": "電車・バス",
+                    "route_from": "青砥",
+                    "route_to": "青物横丁",
+                    "route_line": None,
+                    "one_way_amount": 651,
+                    "is_round_trip": None,
+                    "receipt_no": None,
+                }
+            ],
+        }
+    )
+    wb = load_workbook(result["output_path"])
+    ws = wb["精算書（交通費）"]
+
+    assert ws["F9"].value == "営業活動"
+    assert ws["AD9"].value in (None, "")
+
+
 def test_writer_raises_for_missing_required_field(tmp_path: Path) -> None:
     writer = ExcelWriter(package_dir=PACKAGE_DIR, draft_dir=tmp_path)
     payload = {
