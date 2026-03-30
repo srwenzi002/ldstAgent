@@ -41,7 +41,17 @@ class OpenAIExcelAgent:
             ),
             openai_function_tool(
                 "generate_personal_expense_sheet",
-                "生成个人报销计算表。适用于餐费、招待费、采购等个人代垫报销。",
+                (
+                    "生成个人立替经费精算表。你必须直接输出接近最终Excel的数据。"
+                    "items 最多 3 条。"
+                    "items[].purpose 必须使用模板中的精确值，例如 交際費, 会議費, 旅費交通費, 通信費, "
+                    "消耗品費, 図書費, 福利厚生費＿レクレーション補助, 福利厚生費＿社内福利厚生行事, "
+                    "福利厚生費＿健康診断, 福利厚生費, 他支払手数料, 印紙税, 他租税公課, 水道光熱費, "
+                    "荷造運賃, 諸会費, 保険料, 立替金＿LDNS, 立替金, その他。"
+                    "items[].burden_department 必须使用精确部署名。"
+                    "items[].project_code_name 必须填写模板允许的完整案件コード名称；如果用户没有明确提供且无法可靠判断，应先追问，不要猜测。"
+                    "不要输出 schema 之外的字段。"
+                ),
                 PersonalExpenseSheetInput,
             ),
         ]

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -86,25 +86,79 @@ class TransportSheetInput(BaseModel):
 class PersonalExpenseItemInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    expense_date: str = Field(description="YYYY-MM-DD")
-    purpose: str
-    amount_jpy: float
-    payee_name: str
-    description: str
-    burden_department: str
-    project_code_name: str
-    counterparty_company: str
-    counterparty_attendees: str
-    counterparty_count: int
-    internal_attendees: str
-    internal_count: int
+    expense_date: str = Field(description="精算対象日。YYYY-MM-DD。")
+    purpose: Literal[
+        "交際費",
+        "会議費",
+        "旅費交通費",
+        "通信費",
+        "消耗品費",
+        "図書費",
+        "福利厚生費＿レクレーション補助",
+        "福利厚生費＿社内福利厚生行事",
+        "福利厚生費＿健康診断",
+        "福利厚生費",
+        "他支払手数料",
+        "印紙税",
+        "他租税公課",
+        "水道光熱費",
+        "荷造運賃",
+        "諸会費",
+        "保険料",
+        "立替金＿LDNS",
+        "立替金",
+        "その他",
+    ] = Field(
+        description=(
+            "精算科目。必须使用模板中的精确值。"
+            "可选值包括 交際費, 会議費, 旅費交通費, 通信費, 消耗品費, 図書費, "
+            "福利厚生費＿レクレーション補助, 福利厚生費＿社内福利厚生行事, 福利厚生費＿健康診断, "
+            "福利厚生費, 他支払手数料, 印紙税, 他租税公課, 水道光熱費, 荷造運賃, 諸会費, 保険料, "
+            "立替金＿LDNS, 立替金, その他。"
+        )
+    )
+    amount_jpy: float = Field(description="税込金額。単位は円。")
+    payee_name: str = Field(description="支払先名称。例: 店舗名、会社名、サービス名。")
+    description: str = Field(description="内容説明。購入内容、会食内容、用途などを簡潔に記入。")
+    burden_department: Literal[
+        "取締役会",
+        "営業部",
+        "管理部",
+        "開発本部",
+        "ソリューション開発部",
+        "プラットフォーム開発部",
+        "カスタマサポートエンジニアリング部",
+    ] = Field(
+        description=(
+            "負担部署。必须使用模板中的精确值。"
+            "可选值: 取締役会, 営業部, 管理部, 開発本部, ソリューション開発部, "
+            "プラットフォーム開発部, カスタマサポートエンジニアリング部。"
+        )
+    )
+    project_code_name: str = Field(
+        description=(
+            "案件コード名称。必须填写模板中的精确值，例如 "
+            "SD0001：SD部門経費, PF0001：PF部門経費, CSE001：CSE部門経費, "
+            "KH0001：開発本部部門経費, BL0010：先端技術開発室, BL0021：第一開発部。"
+            "如果用户没有明确给出且无法从上下文确定，应先追问，不要猜测。"
+        )
+    )
+    counterparty_company: str = Field(description="会食或交际对象的公司名。没有公司名时也要填可识别的对象名称。")
+    counterparty_attendees: str = Field(description="对方参加者姓名列表。多人时用顿号、逗号或中点分隔。")
+    counterparty_count: int = Field(ge=0, description="对方参加人数。")
+    internal_attendees: str = Field(description="我方参加者姓名列表。多人时用顿号、逗号或中点分隔。")
+    internal_count: int = Field(ge=0, description="我方参加人数。")
 
 
 class PersonalExpenseSheetInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     employee: EmployeeInput | None = None
-    items: list[PersonalExpenseItemInput] = Field(min_length=1, max_length=3)
+    items: list[PersonalExpenseItemInput] = Field(
+        min_length=1,
+        max_length=3,
+        description="個人立替精算の明細。1回の帳票で最大3件まで。",
+    )
 
 
 def _normalize_for_openai(schema: dict[str, Any]) -> dict[str, Any]:
