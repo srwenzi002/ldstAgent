@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import calendar
 from dataclasses import dataclass
-from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -46,7 +44,7 @@ class ExcelToolService:
             "year": args.year,
             "month": args.month,
             "employee": employee,
-            "work_grade": args.work_grade or self.settings.default_work_grade,
+            "work_grade": None,
             "paid_leave_balance": args.paid_leave_balance,
             "items": self._build_attendance_items(args),
         }
@@ -96,35 +94,6 @@ class ExcelToolService:
         }
 
     def _build_attendance_items(self, args: AttendanceSheetInput) -> list[dict[str, Any]]:
-        overrides = {item.day: item for item in args.day_overrides}
-        items: list[dict[str, Any]] = []
-        days_in_month = calendar.monthrange(args.year, args.month)[1]
-        base_work_grade = args.work_grade or self.settings.default_work_grade
-        base_clock_in = args.clock_in or self.settings.default_clock_in
-        base_clock_out = args.clock_out or self.settings.default_clock_out
-
-        for day in range(1, days_in_month + 1):
-            current_date = date(args.year, args.month, day)
-            override = overrides.get(day)
-            if override is None and not args.full_attendance:
-                continue
-            if current_date.weekday() >= 5 and override is None:
-                continue
-
-            item = {
-                "day": day,
-                "work_grade": base_work_grade,
-                "clock_in": base_clock_in,
-                "clock_out": base_clock_out,
-            }
-            if override:
-                item = self._apply_day_override(item, override)
-            items.append(item)
+        items = [item.model_dump(mode="json", exclude_none=True) for item in args.days]
+        items.sort(key=lambda item: int(item["day"]))
         return items
-
-    @staticmethod
-    def _apply_day_override(item: dict[str, Any], override: AttendanceDayOverride) -> dict[str, Any]:
-        data = override.model_dump(exclude_none=True)
-        data.pop("day", None)
-        item.update(data)
-        return item

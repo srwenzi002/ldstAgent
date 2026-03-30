@@ -87,7 +87,17 @@ def test_attendance_tool_expands_weekdays(tmp_path: Path) -> None:
     settings = build_settings(tmp_path)
     service = ExcelToolService(settings)
 
-    result = service.generate_attendance_sheet({"year": 2026, "month": 3, "full_attendance": True})
+    result = service.generate_attendance_sheet(
+        {
+            "year": 2026,
+            "month": 3,
+            "employee": {"department_code": "51", "employee_id": "0001", "name": "山田太郎"},
+            "days": [
+                {"day": 2, "work_grade": 2, "clock_in": "09:00", "clock_out": "17:30"},
+                {"day": 3, "work_grade": 2, "clock_in": "09:00", "clock_out": "17:30"},
+            ],
+        }
+    )
     wb = load_workbook(result["output_path"])
     ws = wb["勤務状況表"]
 
@@ -97,3 +107,33 @@ def test_attendance_tool_expands_weekdays(tmp_path: Path) -> None:
     assert ws["G12"].value is None
     assert ws["F13"].value is not None
     assert ws["G13"].value is not None
+    assert ws["E13"].value == 2
+
+
+def test_attendance_tool_writes_half_day_leave_directly(tmp_path: Path) -> None:
+    settings = build_settings(tmp_path)
+    service = ExcelToolService(settings)
+
+    result = service.generate_attendance_sheet(
+        {
+            "year": 2026,
+            "month": 2,
+            "employee": {"department_code": "51", "employee_id": "0001", "name": "山田太郎"},
+            "days": [
+                {
+                    "day": 6,
+                    "leave_item_no": 2,
+                    "work_grade": 2,
+                    "clock_in": "13:00",
+                    "clock_out": "18:00",
+                }
+            ],
+        }
+    )
+    wb = load_workbook(result["output_path"])
+    ws = wb["勤務状況表"]
+
+    assert ws["K17"].value == 2
+    assert ws["E17"].value == 2
+    assert ws["F17"].value is not None
+    assert ws["G17"].value is not None

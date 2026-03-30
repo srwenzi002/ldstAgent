@@ -12,32 +12,53 @@ class EmployeeInput(BaseModel):
     employee_id: str | None = Field(default=None, description="社員番号")
     name: str | None = Field(default=None, description="氏名")
     department: str | None = Field(default=None, description="部署名")
-    department_code: str | None = Field(default=None, description="部署コード")
+    department_code: str | None = Field(
+        default=None,
+        description=(
+            "部署コード。"
+            "10=取締役会, 20=営業部, 30=管理部, 50=開発本部, 51=ソリューション開発部, "
+            "52=プラットフォーム開発部, 60=カスタマサポートエンジニアリング部, 70=その他指定部署。"
+        ),
+    )
 
 
 class AttendanceDayOverride(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    day: int = Field(ge=1, le=31)
-    work_grade: int | None = Field(default=None, ge=1, le=4)
-    clock_in: str | None = Field(default=None, description="HH:MM")
-    clock_out: str | None = Field(default=None, description="HH:MM")
-    special_note: str | None = None
-    leave_item_no: int | None = None
+    day: int = Field(ge=1, le=31, description="日付の日部分。1-31。")
+    work_grade: int | None = Field(
+        default=None,
+        ge=1,
+        le=4,
+        description="就業区分。1=09:30-18:00, 2=09:00-17:30, 3=10:00-18:30, 4=10:30-19:00。",
+    )
+    clock_in: str | None = Field(default=None, description="出勤時刻。HH:MM。")
+    clock_out: str | None = Field(default=None, description="退勤時刻。HH:MM。")
+    special_note: str | None = Field(default=None, description="特記事項。必要時のみ。")
+    leave_item_no: int | None = Field(
+        default=None,
+        ge=1,
+        le=15,
+        description=(
+            "休暇項目番号。"
+            "1=有給休暇(全日), 2=有給休暇(午前), 3=有給休暇(午後), 4=欠勤, 5=健診BC, "
+            "6=無給休暇, 7=振休, 8=代休, 9=特別代休, 10=結忌引配出産, 11=SP5(GW・夏季), "
+            "12=その他特休, 13=積立休暇, 14=休業, 15=教育訓練。"
+        ),
+    )
 
 
 class AttendanceSheetInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    year: int = Field(ge=2000, le=2100)
-    month: int = Field(ge=1, le=12)
-    employee: EmployeeInput | None = None
-    full_attendance: bool = Field(default=True, description="平日を全勤として自動展開するか")
-    work_grade: int | None = Field(default=None, ge=1, le=4)
-    clock_in: str | None = Field(default=None, description="HH:MM")
-    clock_out: str | None = Field(default=None, description="HH:MM")
-    paid_leave_balance: float | None = None
-    day_overrides: list[AttendanceDayOverride] = Field(default_factory=list)
+    year: int = Field(ge=2000, le=2100, description="対象年。")
+    month: int = Field(ge=1, le=12, description="対象月。1-12。")
+    employee: EmployeeInput
+    paid_leave_balance: float | None = Field(default=None, description="有休残日数。")
+    days: list[AttendanceDayOverride] = Field(
+        default_factory=list,
+        description="表に書き込む日ごとの勤怠データ。必要な日だけ出力する。",
+    )
 
 
 class TransportItemInput(BaseModel):
