@@ -730,3 +730,58 @@ def test_transport_route_batch_lookup_prompts_when_multiple_close_candidates_exi
     assert result["items"][0]["prompt_reason"] == "multiple_close_candidates"
     assert len(result["resolved_items"]) == 0
     assert len(result["needs_confirmation"]) == 1
+
+
+def test_transport_route_batch_lookup_merges_inverse_same_day_items_as_round_trip(tmp_path: Path) -> None:
+    settings = build_settings(tmp_path)
+    service = ExcelToolService(settings)
+
+    class StubClient:
+        def search_route_options(self, *, route_from: str, route_to: str, top_k: int, travel_date: str | None):
+            return [
+                type(
+                    "StubOption",
+                    (),
+                    {
+                        "as_dict": lambda self: {
+                            "option_id": "1",
+                            "route_summary": f"{route_from} -> {route_to}",
+                            "route_line": f"{route_from} -> 京成本線 -> {route_to}",
+                            "one_way_amount": 280,
+                            "total_minutes": 25,
+                            "transfer_count": 0,
+                        }
+                    },
+                )()
+            ]
+
+    service.ekispert_client = StubClient()
+
+    result = service.lookup_transport_route_batch(
+        {
+            "items": [
+                {
+                    "travel_date": "2026-03-27",
+                    "route_from": "京成上野",
+                    "route_to": "青砥",
+                    "one_way_amount": 272,
+                    "route_line": None,
+                },
+                {
+                    "travel_date": "2026-03-27",
+                    "route_from": "青砥",
+                    "route_to": "京成上野",
+                    "one_way_amount": 272,
+                    "route_line": None,
+                },
+            ],
+            "top_k": 2,
+        }
+    )
+
+    assert len(result["resolved_items"]) == 1
+    assert result["resolved_items"][0]["route_from"] == "京成上野"
+    assert result["resolved_items"][0]["route_to"] == "青砥"
+    assert result["resolved_items"][0]["is_round_trip"] is True
+    assert len(result["round_trip_suggestions"]) == 1
+    assert result["round_trip_suggestions"][0]["merged_item_ids"] == ["1", "2"]

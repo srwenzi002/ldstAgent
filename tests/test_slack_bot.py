@@ -133,3 +133,25 @@ def test_filter_context_keeps_older_user_file_messages(tmp_path: Path) -> None:
 
     assert len(filtered) == 2
     assert filtered[0]["files"][0]["mimetype"] == "image/png"
+
+
+def test_agent_status_mapping_for_route_lookup(tmp_path: Path) -> None:
+    settings = build_settings(tmp_path)
+    tool_service = ExcelToolService(settings)
+    agent = OpenAIExcelAgent(settings, tool_service)
+
+    status, messages = agent._status_for_tool_name("lookup_transport_route_batch")
+
+    assert status == "is checking routes..."
+    assert messages == ["正在查询路线与票价", "正在比对截图金额"]
+
+
+def test_agent_status_mapping_for_attendance_generation(tmp_path: Path) -> None:
+    settings = build_settings(tmp_path)
+    tool_service = ExcelToolService(settings)
+    agent = OpenAIExcelAgent(settings, tool_service)
+
+    status, messages = agent._status_for_tool_name("generate_attendance_sheet")
+
+    assert status == "is generating Excel..."
+    assert messages == ["正在整理出勤数据", "正在生成 Excel"]

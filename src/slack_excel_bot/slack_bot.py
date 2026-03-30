@@ -94,10 +94,18 @@ class SlackExcelBot:
                 thread_ts,
                 event.get("subtype"),
             )
-            await self._safe_set_status(channel, thread_ts, "is thinking...", ["正在理解你的请求", "正在整理上下文"])
+            await self._safe_set_status(channel, thread_ts, "is thinking...", ["正在分析你的请求"])
             conversation_input = await self._build_openai_input(event=event, trace=trace)
             trace.write_section("conversation_input", conversation_input)
-            result = await asyncio.to_thread(self.agent.run, conversation_input, trace)
+            loop = asyncio.get_running_loop()
+
+            def status_callback(status: str, loading_messages: list[str] | None) -> None:
+                asyncio.run_coroutine_threadsafe(
+                    self._safe_set_status(channel, thread_ts, status, loading_messages),
+                    loop,
+                )
+
+            result = await asyncio.to_thread(self.agent.run, conversation_input, trace, status_callback)
             trace.write_section("agent_result", {"text": result.text, "generated_files": result.generated_files})
 
             for item in result.generated_files:

@@ -73,6 +73,8 @@ class OpenAIExcelAgent:
                     "它可以把图片识别出的起终点、日期送去 Ekispert 查询，并返回每条明细的匹配候选。"
                     "如果图片识别的金额刚好命中某个候选，可以优先采用 matched_option。"
                     "如果没有命中，先把候选列给用户确认，不要直接生成 Excel。"
+                    "如果批量结果里出现 round_trip_suggestions，表示工具已经识别出可默认合并的往返对。"
+                    "这时优先使用 resolved_items 里已经合并后的结果生成 Excel，并在回复里明确告诉用户：我已默认按往返合并，如需拆成两条片道请告诉我。"
                 ),
                 TransportRouteBatchLookupInput,
             ),
@@ -131,7 +133,12 @@ class OpenAIExcelAgent:
             "generate_personal_expense_sheet": self.tool_service.generate_personal_expense_sheet,
         }
 
-    def run(self, conversation_input: list[dict[str, Any]], trace: DebugTrace | None = None) -> AgentResult:
+    def run(
+        self,
+        conversation_input: list[dict[str, Any]],
+        trace: DebugTrace | None = None,
+        status_callback: Callable[[str, list[str] | None], None] | None = None,
+    ) -> AgentResult:
         client = OpenAI(api_key=self.settings.openai_api_key)
         today_jst = datetime.now(ZoneInfo("Asia/Tokyo")).date()
         instructions = (
@@ -154,6 +161,7 @@ class OpenAIExcelAgent:
             "其中 定 不是自动排除项；它可能是定期区间中的进站或出站线索，需要结合相邻事件和跨图上下文判断。"
             "如果 analyze_expense_evidence 识别出了 transport_items，不要直接绕过旧逻辑；先调用 lookup_transport_route_batch，用 Ekispert 校验或补全这些图片识别出的明细。"
             "如果 batch 查询返回了 resolved_items，优先直接用这些 resolved_items 调用 generate_transport_sheet。"
+            "如果 batch 查询返回了 round_trip_suggestions，说明其中部分同日互逆路线已被默认按往返合并。生成后要在回复里提醒用户，如需拆开可以继续告诉你。"
             "如果 batch 查询中某条有 matched_option，优先用 matched_option 的路线；但 Excel 里的金额仍优先保留图片或用户提供的金额。"
             "如果 batch 查询中某条没有 matched_option，但候选很明确，可以请用户确认；如果有多种可能，也先展示候选编号给用户。"
             "当图片或用户已经提供了交通金额时，Excel 里的 one_way_amount 应优先保留用户金额；Ekispert 金额主要用于路线校验，不要把用户的 IC 金额改写成现金票价。"
@@ -199,6 +207,9 @@ class OpenAIExcelAgent:
 
             tool_outputs = []
             for call in function_calls:
+                if status_callback is not None:
+                    status_text, loading_messages = self._status_for_tool_name(call.name)
+                    status_callback(status_text, loading_messages)
                 handler = self.handlers[call.name]
                 arguments = json.loads(call.arguments)
                 result = handler(arguments)
@@ -246,6 +257,36 @@ class OpenAIExcelAgent:
             text="我已经处理了请求，但本轮工具调用次数达到上限，请检查输入后重试。",
             generated_files=generated_files,
         )
+
+    @staticmethod
+    def _status_for_tool_name(tool_name: str) -> tuple[str, list[str]]:
+        status_map = {
+            "analyze_expense_evidence": (
+                "is analyzing evidence...",
+                ["正在识别截图内容", "正在整理票据字段"],
+            ),
+            "lookup_transport_route_batch": (
+                "is checking routes...",
+                ["正在查询路线与票价", "正在比对截图金额"],
+            ),
+            "lookup_transport_route_options": (
+                "is checking routes...",
+                ["正在查询路线与票价", "正在整理候选路线"],
+            ),
+            "generate_transport_sheet": (
+                "is generating Excel...",
+                ["正在填写交通费精算表", "正在生成 Excel"],
+            ),
+            "generate_personal_expense_sheet": (
+                "is generating Excel...",
+                ["正在填写个人报销表", "正在生成 Excel"],
+            ),
+            "generate_attendance_sheet": (
+                "is generating Excel...",
+                ["正在整理出勤数据", "正在生成 Excel"],
+            ),
+        }
+        return status_map.get(tool_name, ("is thinking...", ["正在处理你的请求"]))
 
     @staticmethod
     def _tool_result_summary(result: dict[str, Any]) -> dict[str, Any]:

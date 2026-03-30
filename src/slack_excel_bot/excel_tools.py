@@ -105,7 +105,7 @@ class ExcelToolService:
             raise EkispertError("EXPENSES_EKISPERT_API_TOKEN is not configured.")
 
         results: list[dict[str, Any]] = []
-        resolved_items: list[dict[str, Any]] = []
+        resolved_candidates: list[dict[str, Any]] = []
         needs_confirmation: list[dict[str, Any]] = []
         any_success = False
         for index, item in enumerate(args.items, start=1):
@@ -138,8 +138,9 @@ class ExcelToolService:
                 }
                 results.append(result_item)
                 if result_item["matched_option"] is not None and not result_item["should_prompt_user"]:
-                    resolved_items.append(
+                    resolved_candidates.append(
                         {
+                            "item_id": str(index),
                             "travel_date": item.travel_date,
                             "purpose": None,
                             "visit_place": None,
@@ -171,11 +172,13 @@ class ExcelToolService:
                 results.append(failed_item)
                 needs_confirmation.append(failed_item)
 
+        resolved_items, round_trip_suggestions = self._merge_round_trip_candidates(resolved_candidates)
         return {
             "ok": any_success,
             "title": "交通路线批量查询结果",
             "has_partial_failures": any(item["status"] != "ok" for item in results),
             "resolved_items": resolved_items,
+            "round_trip_suggestions": round_trip_suggestions,
             "needs_confirmation": needs_confirmation,
             "items": results,
         }
@@ -323,3 +326,63 @@ class ExcelToolService:
             and abs(int(first.get("transfer_count") or 99) - int(second.get("transfer_count") or 99)) <= 1
             and abs(int(first.get("total_minutes") or 999) - int(second.get("total_minutes") or 999)) <= 10
         )
+
+    @staticmethod
+    def _merge_round_trip_candidates(
+        resolved_candidates: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        merged_items: list[dict[str, Any]] = []
+        round_trip_suggestions: list[dict[str, Any]] = []
+        used_indexes: set[int] = set()
+
+        for index, item in enumerate(resolved_candidates):
+            if index in used_indexes:
+                continue
+
+            pair_index = None
+            for candidate_index in range(index + 1, len(resolved_candidates)):
+                candidate = resolved_candidates[candidate_index]
+                if candidate_index in used_indexes:
+                    continue
+                if (
+                    candidate["travel_date"] == item["travel_date"]
+                    and float(candidate["one_way_amount"]) == float(item["one_way_amount"])
+                    and candidate["route_from"] == item["route_to"]
+                    and candidate["route_to"] == item["route_from"]
+                ):
+                    pair_index = candidate_index
+                    break
+
+            if pair_index is None:
+                merged_items.append({key: value for key, value in item.items() if key != "item_id"})
+                continue
+
+            pair_item = resolved_candidates[pair_index]
+            used_indexes.add(index)
+            used_indexes.add(pair_index)
+            merged_items.append(
+                {
+                    "travel_date": item["travel_date"],
+                    "purpose": item.get("purpose"),
+                    "visit_place": item.get("visit_place"),
+                    "transport_mode": item["transport_mode"],
+                    "route_from": item["route_from"],
+                    "route_to": item["route_to"],
+                    "route_line": item.get("route_line"),
+                    "one_way_amount": item["one_way_amount"],
+                    "is_round_trip": True,
+                    "receipt_no": item.get("receipt_no"),
+                }
+            )
+            round_trip_suggestions.append(
+                {
+                    "travel_date": item["travel_date"],
+                    "route_from": item["route_from"],
+                    "route_to": item["route_to"],
+                    "one_way_amount": item["one_way_amount"],
+                    "merged_item_ids": [item["item_id"], pair_item["item_id"]],
+                    "message": "同日同金额且起终点互逆，已默认按往返合并；如需拆成两条片道，请告诉我。",
+                }
+            )
+
+        return merged_items, round_trip_suggestions
