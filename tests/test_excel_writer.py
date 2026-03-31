@@ -105,6 +105,7 @@ def test_transport_tool_generates_workbook(tmp_path: Path) -> None:
     assert ws["K9"].value == "電車・バス"
     assert ws["AA9"].value == 178
     assert ws["AD9"].value == "●"
+    assert result["title"] == "精算書_集（交通費）_山田太郎_202603"
 
 
 def test_transport_tool_applies_default_purpose_and_round_trip(tmp_path: Path) -> None:
@@ -186,6 +187,7 @@ def test_attendance_tool_expands_weekdays(tmp_path: Path) -> None:
     assert ws["F13"].value is not None
     assert ws["G13"].value is not None
     assert ws["E13"].value == 2
+    assert result["title"] == "Ldjpw668_2603_51_0001_山田太郎"
 
 
 def test_attendance_tool_writes_half_day_leave_directly(tmp_path: Path) -> None:
@@ -257,6 +259,7 @@ def test_personal_expense_tool_generates_workbook(tmp_path: Path) -> None:
     assert ws["Y10"].value == 5500
     assert ws["A12"].value == "渋谷カフェ"
     assert ws["I12"].value == "顧客打合せの飲食代"
+    assert result["title"] == "精算書_集（個人経費立替）_山田太郎_202603"
 
 
 def test_ekispert_route_parser_extracts_candidates() -> None:
@@ -333,7 +336,7 @@ def test_transport_route_lookup_returns_structured_options(tmp_path: Path) -> No
     )
 
     assert result["ok"] is True
-    assert result["title"] == "交通路线候选"
+    assert result["title"] == "交通経路候補"
     assert result["options"][0]["one_way_amount"] == 350
     assert result["options"][0]["transfer_count"] == 1
 
@@ -365,7 +368,7 @@ def test_analyze_expense_evidence_transport_fills_missing_fields_and_default_mod
         }
     )
 
-    assert result["title"] == "票据分析结果"
+    assert result["title"] == "証憑の解析結果"
     assert result["transport_mode"] == "電車・バス"
     assert result["missing_fields"] == ["one_way_amount", "route_line"]
     assert result["evidence_sources"] == ["text", "image"]
@@ -544,7 +547,7 @@ def test_transport_route_batch_lookup_returns_match_and_candidates(tmp_path: Pat
         }
     )
 
-    assert result["title"] == "交通路线批量查询结果"
+    assert result["title"] == "交通経路の一括確認結果"
     assert result["items"][0]["matched_option"]["one_way_amount"] == 272
     assert result["items"][0]["final_one_way_amount"] == 272
     assert result["items"][0]["match_type"] == "exact"

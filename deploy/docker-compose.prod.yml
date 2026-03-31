@@ -1,0 +1,9 @@
+services:
+  slack-excel-bot:
+    image: ${IMAGE_URI:?IMAGE_URI is required}
+    container_name: slack-excel-bot
+    env_file:
+      - .env
+    volumes:
+      - ${HOST_DATA_DIR:-./.data}:/app/.data
+    restart: unless-stopped

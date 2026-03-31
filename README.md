@@ -119,3 +119,67 @@ src/slack_excel_bot/
     registry.json
 tests/
 ```
+
+## Docker 运行
+
+本项目生产环境使用单容器 Docker 运行，不暴露公网端口。
+
+构建镜像：
+
+```bash
+docker build -t slack-excel-bot:local .
+```
+
+本地用 `.env` 启动：
+
+```bash
+docker run --rm \
+  --env-file .env \
+  -v "$PWD/.data:/app/.data" \
+  slack-excel-bot:local
+```
+
+## CI / CD
+
+仓库包含两条 GitHub Actions：
+
+- `CI`：每次 `push` 和 `pull_request` 都会运行 `pytest -q` 并校验 Docker build。
+- `CD`：只有给 `main` 上的提交打 `v*` tag 并推送时才会发布。
+
+CD 发布流程：
+
+1. 校验 tag 指向的提交可从 `origin/main` 到达
+2. 构建 Docker 镜像并推送到 AWS ECR
+3. 通过 SSH 登录 `wen-zi.com`
+4. 更新 `/opt/slack-excel-bot/.env`
+5. 运行部署脚本重建 `slack-excel-bot` 容器
+6. 停掉旧项目 `expenses-agent-api` 和 `expenses-agent-slack-bot`
+
+GitHub Secrets 约定：
+
+- `AWS_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY`
+- `AWS_REGION`
+- `ECR_REPOSITORY`
+- `DEPLOY_HOST`
+- `DEPLOY_USER`
+- `DEPLOY_SSH_KEY`
+- `SERVER_ENV_FILE`
+
+`SERVER_ENV_FILE` 至少应包含：
+
+```dotenv
+SLACK_BOT_TOKEN=xoxb-...
+SLACK_APP_TOKEN=xapp-...
+OPENAI_API_KEY=sk-...
+EXPENSES_EKISPERT_API_TOKEN=...
+OPENAI_MODEL=gpt-5.4
+STORAGE_DIR=/app/.data
+MAX_CONCURRENT_REQUESTS=50
+```
+
+## 部署文档
+
+`wen-zi.com` 的 Docker + GitHub Actions 部署步骤见：
+
+- `docs/deploy-wen-zi.com.md`

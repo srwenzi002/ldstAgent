@@ -94,7 +94,7 @@ class SlackExcelBot:
                 thread_ts,
                 event.get("subtype"),
             )
-            await self._safe_set_status(channel, thread_ts, "is thinking...", ["正在分析你的请求"])
+            await self._safe_set_status(channel, thread_ts, "is thinking...", ["🌷 ご依頼を確認中です"])
             conversation_input = await self._build_openai_input(event=event, trace=trace)
             trace.write_section("conversation_input", conversation_input)
             loop = asyncio.get_running_loop()
@@ -262,9 +262,9 @@ class SlackExcelBot:
 
     async def _safe_set_suggested_prompts(self, channel: str, thread_ts: str) -> None:
         prompts = [
-            {"title": "做三月全勤表", "message": "帮我做一个2026年3月全勤的考勤表"},
-            {"title": "做交通费表", "message": "我会发交通记录截图，帮我生成交通费精算表"},
-            {"title": "做个人报销表", "message": "帮我做个人立替经费精算表"},
+            {"title": "3月の勤務表", "message": "2026年3月の勤務表を作ってください"},
+            {"title": "交通費精算", "message": "交通履歴のスクリーンショットを送るので、交通費精算表を作ってください"},
+            {"title": "立替経費精算", "message": "個人立替経費の精算表を作ってください"},
         ]
         try:
             await self.slack_client.assistant_threads_setSuggestedPrompts(

@@ -36,7 +36,7 @@ class Settings:
             slack_bot_token=os.getenv("SLACK_BOT_TOKEN", "").strip(),
             slack_app_token=os.getenv("SLACK_APP_TOKEN", "").strip(),
             openai_api_key=(os.getenv("OPENAI_API_KEY") or os.getenv("EXPENSES_LLM_API_KEY") or "").strip(),
-            openai_model=(os.getenv("OPENAI_MODEL") or os.getenv("EXPENSES_LLM_MODEL") or "gpt-4.1-mini").strip(),
+            openai_model=(os.getenv("OPENAI_MODEL") or os.getenv("EXPENSES_LLM_MODEL") or "gpt-5.4").strip(),
             ekispert_api_token=(
                 os.getenv("EXPENSES_EKISPERT_API_TOKEN") or os.getenv("EKISPERT_API_ACCESS_KEY") or ""
             ).strip(),

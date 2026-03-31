@@ -1,0 +1,89 @@
+name: CD
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    env:
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+      ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify tag commit is on main
+        run: |
+          git fetch origin main --depth=1
+          TAG_SHA="$(git rev-list -n 1 "$GITHUB_REF")"
+          MAIN_SHA="$(git rev-parse origin/main)"
+          if ! git merge-base --is-ancestor "$TAG_SHA" "$MAIN_SHA"; then
+            echo "Tag ${GITHUB_REF} is not reachable from origin/main"
+            exit 1
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push Docker image
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          VERSION_TAG: ${{ github.ref_name }}
+          SHA_TAG: ${{ github.sha }}
+        run: |
+          IMAGE_URI="$REGISTRY/$ECR_REPOSITORY"
+          docker build -t "$IMAGE_URI:$VERSION_TAG" -t "$IMAGE_URI:$SHA_TAG" .
+          docker push "$IMAGE_URI:$VERSION_TAG"
+          docker push "$IMAGE_URI:$SHA_TAG"
+          {
+            echo "IMAGE_URI=$IMAGE_URI:$VERSION_TAG"
+            echo "IMAGE_REPOSITORY=$IMAGE_URI"
+            echo "IMAGE_TAG=$VERSION_TAG"
+          } >> "$GITHUB_ENV"
+
+      - name: Prepare SSH key
+        run: |
+          install -m 600 /dev/null ~/.ssh/deploy_key
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+
+      - name: Upload deployment assets
+        run: |
+          ssh -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" "sudo mkdir -p /opt/slack-excel-bot && sudo chown -R $DEPLOY_USER:$DEPLOY_USER /opt/slack-excel-bot"
+          scp -i ~/.ssh/deploy_key deploy/docker-compose.prod.yml "$DEPLOY_USER@$DEPLOY_HOST:/opt/slack-excel-bot/docker-compose.prod.yml"
+          scp -i ~/.ssh/deploy_key deploy/deploy.sh "$DEPLOY_USER@$DEPLOY_HOST:/opt/slack-excel-bot/deploy.sh"
+          ssh -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" "chmod +x /opt/slack-excel-bot/deploy.sh"
+
+      - name: Upload server env file
+        run: |
+          cat > server.env <<'EOF'
+          ${{ secrets.SERVER_ENV_FILE }}
+          EOF
+          scp -i ~/.ssh/deploy_key server.env "$DEPLOY_USER@$DEPLOY_HOST:/opt/slack-excel-bot/.env"
+
+      - name: Deploy to wen-zi.com
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          ssh -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" \
+            "export AWS_ACCESS_KEY_ID='${{ secrets.AWS_ACCESS_KEY_ID }}' AWS_SECRET_ACCESS_KEY='${{ secrets.AWS_SECRET_ACCESS_KEY }}' AWS_REGION='${{ secrets.AWS_REGION }}'; aws ecr get-login-password --region '${{ secrets.AWS_REGION }}' | docker login --username AWS --password-stdin '$ECR_REGISTRY'; export IMAGE_URI='$IMAGE_URI' IMAGE_TAG='${GITHUB_REF_NAME}' GITHUB_SHA='${GITHUB_SHA}' GITHUB_REF='${GITHUB_REF}'; /opt/slack-excel-bot/deploy.sh"

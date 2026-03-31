@@ -166,7 +166,7 @@ class TransportLedgerEventInput(BaseModel):
 
     travel_date: str = Field(description="履历事件日期。YYYY-MM-DD。")
     event_kind: Literal["入", "出", "窓出", "物販", "定", "charge", "other"] = Field(
-        description="交通卡履历中的原始事件类型。注意：定 不能直接丢弃，它可能代表定期区间相关的进站或出站事件。"
+        description="交通卡履历中的原始事件类型。定 也可以按普通的入出场线索理解。"
     )
     event_role: Literal["entry", "exit", "pass_entry_or_exit", "shopping", "adjustment", "charge", "unknown"] | None = (
         Field(
@@ -174,7 +174,7 @@ class TransportLedgerEventInput(BaseModel):
             description=(
                 "对该原始事件的业务解释。"
                 "入 通常对应 entry，出 通常对应 exit，"
-                "定 可以填写 pass_entry_or_exit，表示它可能是定期区间相关的进/出站事件，不能轻易舍弃。"
+                "定 可以按 entry / exit / pass_entry_or_exit 处理，不需要单独作为特殊可疑事件强调。"
             ),
         )
     )

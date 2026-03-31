@@ -61,7 +61,7 @@ class ExcelToolService:
         return GeneratedWorkbook(
             template_id=result.template_id,
             output_path=result.output_path,
-            title=f"{args.year}年{args.month}月_考勤表",
+            title=self._build_attendance_title(payload),
             payload=payload,
         ).as_tool_output()
 
@@ -75,7 +75,7 @@ class ExcelToolService:
         return GeneratedWorkbook(
             template_id=result.template_id,
             output_path=result.output_path,
-            title="交通费精算表",
+            title=self._build_transport_title(payload),
             payload=payload,
         ).as_tool_output()
 
@@ -92,7 +92,7 @@ class ExcelToolService:
         )
         return {
             "ok": True,
-            "title": "交通路线候选",
+            "title": "交通経路候補",
             "travel_date": args.travel_date,
             "route_from": args.route_from,
             "route_to": args.route_to,
@@ -175,7 +175,7 @@ class ExcelToolService:
         resolved_items, round_trip_suggestions = self._merge_round_trip_candidates(resolved_candidates)
         return {
             "ok": any_success,
-            "title": "交通路线批量查询结果",
+            "title": "交通経路の一括確認結果",
             "has_partial_failures": any(item["status"] != "ok" for item in results),
             "resolved_items": resolved_items,
             "round_trip_suggestions": round_trip_suggestions,
@@ -196,7 +196,7 @@ class ExcelToolService:
                 item["transport_mode"] = "電車・バス"
         return {
             "ok": True,
-            "title": "票据分析结果",
+            "title": "証憑の解析結果",
             **payload,
         }
 
@@ -210,7 +210,7 @@ class ExcelToolService:
         return GeneratedWorkbook(
             template_id=result.template_id,
             output_path=result.output_path,
-            title="个人报销计算表",
+            title=self._build_personal_expense_title(payload),
             payload=payload,
         ).as_tool_output()
 
@@ -222,6 +222,36 @@ class ExcelToolService:
             "department": values.get("department") or self.settings.default_department,
             "department_code": values.get("department_code") or self.settings.default_department_code,
         }
+
+    @staticmethod
+    def _build_transport_title(payload: dict[str, Any]) -> str:
+        employee = payload["employee"]
+        items = payload.get("items") or []
+        yyyymm = "YYYYMM"
+        if items:
+            travel_date = str(items[0].get("travel_date") or "")
+            if len(travel_date) >= 7:
+                yyyymm = travel_date[:7].replace("-", "")
+        return f"精算書_集（交通費）_{employee['name']}_{yyyymm}"
+
+    @staticmethod
+    def _build_personal_expense_title(payload: dict[str, Any]) -> str:
+        employee = payload["employee"]
+        items = payload.get("items") or []
+        yyyymm = "YYYYMM"
+        if items:
+            expense_date = str(items[0].get("expense_date") or "")
+            if len(expense_date) >= 7:
+                yyyymm = expense_date[:7].replace("-", "")
+        return f"精算書_集（個人経費立替）_{employee['name']}_{yyyymm}"
+
+    @staticmethod
+    def _build_attendance_title(payload: dict[str, Any]) -> str:
+        employee = payload["employee"]
+        year = int(payload["year"])
+        month = int(payload["month"])
+        yymm = f"{year % 100:02d}{month:02d}"
+        return f"Ldjpw668_{yymm}_{employee['department_code']}_{employee['employee_id']}_{employee['name']}"
 
     def _build_attendance_items(self, args: AttendanceSheetInput) -> list[dict[str, Any]]:
         items = [item.model_dump(mode="json", exclude_none=True) for item in args.days]
@@ -381,7 +411,7 @@ class ExcelToolService:
                     "route_to": item["route_to"],
                     "one_way_amount": item["one_way_amount"],
                     "merged_item_ids": [item["item_id"], pair_item["item_id"]],
-                    "message": "同日同金额且起终点互逆，已默认按往返合并；如需拆成两条片道，请告诉我。",
+                    "message": "同日・同額で往路と復路がそろっていたため、いったん往復としてまとめました✨ 別々の片道にしたい場合は教えてください。",
                 }
             )
 

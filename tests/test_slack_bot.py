@@ -143,7 +143,7 @@ def test_agent_status_mapping_for_route_lookup(tmp_path: Path) -> None:
     status, messages = agent._status_for_tool_name("lookup_transport_route_batch")
 
     assert status == "is checking routes..."
-    assert messages == ["正在查询路线与票价", "正在比对截图金额"]
+    assert messages == ["🚃 経路と運賃を確認中です", "💴 金額を照合しています"]
 
 
 def test_agent_status_mapping_for_attendance_generation(tmp_path: Path) -> None:
@@ -154,4 +154,4 @@ def test_agent_status_mapping_for_attendance_generation(tmp_path: Path) -> None:
     status, messages = agent._status_for_tool_name("generate_attendance_sheet")
 
     assert status == "is generating Excel..."
-    assert messages == ["正在整理出勤数据", "正在生成 Excel"]
+    assert messages == ["📅 勤務データを整理中です", "📎 Excel を仕上げています"]
