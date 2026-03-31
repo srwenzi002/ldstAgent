@@ -1,7 +1,7 @@
 # `wen-zi.com` Docker / GitHub Actions 部署手顺
 
 このプロジェクトは Slack `Socket Mode` の常駐 bot なので、公開 HTTP エンドポイントは不要です。
-本番では Docker コンテナ 1 個だけを常駐させ、GitHub Actions から自動デプロイします。
+本番では Docker コンテナ 1 個だけを常駐させ、GitHub Actions からソースを転送し、サーバー側で Docker build して自動デプロイします。
 
 ## 現在のサーバー方針
 
@@ -69,20 +69,17 @@ services:
 
 1. AWS 認証
 2. ECR ログイン
-3. Docker イメージ build / push
+3. tag 対応のソースを `release.tar.gz` として作成
 4. SSH で `wen-zi.com` に接続
 5. `/opt/slack-excel-bot/.env` を更新
-6. `/opt/slack-excel-bot/deploy.sh` を実行
-7. 新コンテナ起動後に旧 `expenses-agent-*` コンテナを停止・削除
+6. サーバーでソースを展開し `docker build -t slack-excel-bot:<tag>` を実行
+7. `/opt/slack-excel-bot/deploy.sh` を実行
+8. 新コンテナ起動後に旧 `expenses-agent-*` コンテナを停止・削除
 
 ## GitHub Secrets
 
 GitHub リポジトリ側で以下を設定します。
 
-- `AWS_ACCESS_KEY_ID`
-- `AWS_SECRET_ACCESS_KEY`
-- `AWS_REGION`
-- `ECR_REPOSITORY`
 - `DEPLOY_HOST`
 - `DEPLOY_USER`
 - `DEPLOY_SSH_KEY`
@@ -92,7 +89,6 @@ GitHub リポジトリ側で以下を設定します。
 
 - `DEPLOY_HOST=wen-zi.com`
 - `DEPLOY_USER=ec2-user`
-- `ECR_REPOSITORY=slack-excel-bot`
 
 `DEPLOY_SSH_KEY` には `/Users/srwenzi/Downloads/JapanServerKey.pem` の中身をそのまま登録します。
 
@@ -124,8 +120,6 @@ MAX_CONCURRENT_REQUESTS=50
 3. `main` を push する
 4. GitHub の default branch を `main` に設定する
 5. Secrets を登録する
-6. AWS ECR に `slack-excel-bot` リポジトリを作成する
-
 通常リリース:
 
 ```bash
@@ -137,7 +131,8 @@ git push origin main --tags
 
 これで GitHub Actions が自動的に:
 
-- イメージを `185170188479.dkr.ecr.ap-northeast-1.amazonaws.com/slack-excel-bot:v0.1.0` に push
+- tag のソースを `wen-zi.com` に転送
+- サーバーで `slack-excel-bot:v0.1.0` を build
 - `wen-zi.com` 上の `slack-excel-bot` を更新
 - 旧 `expenses-agent-api` / `expenses-agent-slack-bot` を停止
 
@@ -146,7 +141,7 @@ git push origin main --tags
 `deploy/deploy.sh` は冪等に動くようにしてあります。
 
 - `/opt/slack-excel-bot` と `.data` を作成
-- `docker pull`
+- サーバーで build 済みのローカル image を使って `docker compose up -d --remove-orphans`
 - `docker compose up -d --remove-orphans`
 - 旧コンテナ停止と削除
 - `.release.json` 更新

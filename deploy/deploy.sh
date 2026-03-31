@@ -35,7 +35,9 @@ if [[ ! -f "$ENV_FILE" ]]; then
   exit 1
 fi
 
-docker pull "$IMAGE_URI"
+if [[ "$IMAGE_URI" == *"/"* ]]; then
+  docker pull "$IMAGE_URI"
+fi
 
 IMAGE_URI="$IMAGE_URI" HOST_DATA_DIR="$HOST_DATA_DIR" docker compose -f "$COMPOSE_FILE" up -d --remove-orphans
 

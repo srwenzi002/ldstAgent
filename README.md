@@ -149,18 +149,14 @@ docker run --rm \
 CD 发布流程：
 
 1. 校验 tag 指向的提交可从 `origin/main` 到达
-2. 构建 Docker 镜像并推送到 AWS ECR
-3. 通过 SSH 登录 `wen-zi.com`
+2. 打包当前 tag 对应源码并上传到 `wen-zi.com`
+3. 在服务器本地执行 `docker build`
 4. 更新 `/opt/slack-excel-bot/.env`
 5. 运行部署脚本重建 `slack-excel-bot` 容器
 6. 停掉旧项目 `expenses-agent-api` 和 `expenses-agent-slack-bot`
 
 GitHub Secrets 约定：
 
-- `AWS_ACCESS_KEY_ID`
-- `AWS_SECRET_ACCESS_KEY`
-- `AWS_REGION`
-- `ECR_REPOSITORY`
 - `DEPLOY_HOST`
 - `DEPLOY_USER`
 - `DEPLOY_SSH_KEY`
