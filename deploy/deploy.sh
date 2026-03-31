@@ -20,8 +20,12 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 1
 fi
 
-if ! docker compose version >/dev/null 2>&1; then
-  echo "docker compose plugin is required on the target host" >&2
+if docker compose version >/dev/null 2>&1; then
+  COMPOSE_BIN=(docker compose)
+elif command -v docker-compose >/dev/null 2>&1; then
+  COMPOSE_BIN=(docker-compose)
+else
+  echo "docker compose or docker-compose is required on the target host" >&2
   exit 1
 fi
 
@@ -39,7 +43,7 @@ if [[ "$IMAGE_URI" == *"/"* ]]; then
   docker pull "$IMAGE_URI"
 fi
 
-IMAGE_URI="$IMAGE_URI" HOST_DATA_DIR="$HOST_DATA_DIR" docker compose -f "$COMPOSE_FILE" up -d --remove-orphans
+IMAGE_URI="$IMAGE_URI" HOST_DATA_DIR="$HOST_DATA_DIR" "${COMPOSE_BIN[@]}" -f "$COMPOSE_FILE" up -d --remove-orphans
 
 for legacy in expenses-agent-api expenses-agent-slack-bot; do
   if docker ps -a --format '{{.Names}}' | grep -Fxq "$legacy"; then
