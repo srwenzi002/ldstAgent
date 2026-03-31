@@ -80,9 +80,6 @@ services:
 
 GitHub リポジトリ側で以下を設定します。
 
-- `AWS_ACCESS_KEY_ID`
-- `AWS_SECRET_ACCESS_KEY`
-- `AWS_REGION`
 - `DEPLOY_HOST`
 - `DEPLOY_USER`
 - `DEPLOY_SSH_KEY`
@@ -95,7 +92,7 @@ GitHub リポジトリ側で以下を設定します。
 
 `DEPLOY_SSH_KEY` には `/Users/srwenzi/Downloads/JapanServerKey.pem` の中身をそのまま登録します。
 
-`SERVER_ENV_FILE` には本番用 `.env` のうち、非機密設定を登録します。最低限の例:
+`SERVER_ENV_FILE` には本番用 `.env` 全体を登録します。最低限の例:
 
 ```dotenv
 SLACK_BOT_TOKEN=xoxb-...
@@ -113,15 +110,6 @@ DEFAULT_CLOCK_IN=09:00
 DEFAULT_CLOCK_OUT=18:00
 MAX_CONCURRENT_REQUESTS=50
 ```
-
-以下の機密値は GitHub Secret ではなく、AWS SSM Parameter Store からデプロイ時に取得します。
-
-- `/prod/expensesAgent/EXPENSES_LLM_API_KEY`
-- `/prod/expensesAgent/SLACK_BOT_TOKEN`
-- `/prod/expensesAgent/SLACK_APP_TOKEN`
-- `/prod/expensesAgent/EXPENSES_EKISPERT_API_TOKEN`
-
-CD ワークフローは GitHub 側の AWS 認証を使って上記 4 つを取得し、`SERVER_ENV_FILE` の内容とマージした `.env` を `/opt/slack-excel-bot/.env` として配置します。
 
 ## デプロイフロー
 

@@ -13,10 +13,8 @@ jobs:
       contents: read
 
     env:
-      AWS_REGION: ${{ secrets.AWS_REGION }}
       DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
       DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
-      SSM_PREFIX: /prod/expensesAgent
 
     steps:
       - name: Checkout
@@ -38,13 +36,6 @@ jobs:
         run: |
           git archive --format=tar.gz --output release.tar.gz "$GITHUB_SHA"
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
       - name: Prepare SSH key
         run: |
           mkdir -p ~/.ssh
@@ -60,48 +51,11 @@ jobs:
           scp -i ~/.ssh/deploy_key release.tar.gz "$DEPLOY_USER@$DEPLOY_HOST:/opt/slack-excel-bot/release.tar.gz"
           ssh -i ~/.ssh/deploy_key "$DEPLOY_USER@$DEPLOY_HOST" "chmod +x /opt/slack-excel-bot/deploy.sh"
 
-      - name: Build server env file
+      - name: Upload server env file
         run: |
           cat > server.env <<'EOF'
           ${{ secrets.SERVER_ENV_FILE }}
           EOF
-
-          python - <<'PY'
-          from pathlib import Path
-
-          env_path = Path("server.env")
-          secret_keys = {
-              "EXPENSES_LLM_API_KEY",
-              "SLACK_BOT_TOKEN",
-              "SLACK_APP_TOKEN",
-              "EXPENSES_EKISPERT_API_TOKEN",
-          }
-          cleaned = []
-          for line in env_path.read_text(encoding="utf-8").splitlines():
-              key = line.split("=", 1)[0].strip()
-              if key in secret_keys:
-                  continue
-              cleaned.append(line)
-          env_path.write_text("\n".join(cleaned).strip() + "\n", encoding="utf-8")
-          PY
-
-          while IFS= read -r key; do
-            value="$(aws ssm get-parameter \
-              --region "$AWS_REGION" \
-              --name "$SSM_PREFIX/$key" \
-              --with-decryption \
-              --query 'Parameter.Value' \
-              --output text)"
-            printf '%s=%s\n' "$key" "$value" >> server.env
-          done <<'EOF'
-          EXPENSES_LLM_API_KEY
-          SLACK_BOT_TOKEN
-          SLACK_APP_TOKEN
-          EXPENSES_EKISPERT_API_TOKEN
-          EOF
-
-      - name: Upload server env file
-        run: |
           scp -i ~/.ssh/deploy_key server.env "$DEPLOY_USER@$DEPLOY_HOST:/opt/slack-excel-bot/.env"
 
       - name: Deploy to wen-zi.com
