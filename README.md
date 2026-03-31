@@ -157,6 +157,9 @@ CD 发布流程：
 
 GitHub Secrets 约定：
 
+- `AWS_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY`
+- `AWS_REGION`
 - `DEPLOY_HOST`
 - `DEPLOY_USER`
 - `DEPLOY_SSH_KEY`
@@ -173,6 +176,13 @@ OPENAI_MODEL=gpt-5.4
 STORAGE_DIR=/app/.data
 MAX_CONCURRENT_REQUESTS=50
 ```
+
+以下 4 个敏感 token 不再建议放进 `SERVER_ENV_FILE`，而是由 CD 在发布时从 AWS SSM Parameter Store 读取：
+
+- `/prod/expensesAgent/EXPENSES_LLM_API_KEY`
+- `/prod/expensesAgent/SLACK_BOT_TOKEN`
+- `/prod/expensesAgent/SLACK_APP_TOKEN`
+- `/prod/expensesAgent/EXPENSES_EKISPERT_API_TOKEN`
 
 ## 部署文档
 
