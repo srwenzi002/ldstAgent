@@ -38,6 +38,9 @@ class SlackExcelBot:
 
     async def handle_socket_event(self, payload: dict[str, Any], event: dict[str, Any]) -> None:
         event_type = event.get("type")
+        if event_type == "app_home_opened":
+            await self.handle_app_home_opened(event)
+            return
         if event_type == "assistant_thread_started":
             await self.handle_assistant_thread_started(event, payload)
             return
@@ -46,6 +49,16 @@ class SlackExcelBot:
             return
         if event_type == "message":
             self._start_background_task(self._handle_message_event_with_limits(event, payload))
+
+    async def handle_app_home_opened(self, event: dict[str, Any]) -> None:
+        user_id = event.get("user")
+        if not user_id:
+            logger.info("app_home_opened received without user")
+            return
+        try:
+            await self.slack_client.views_publish(user_id=user_id, view=self._build_home_view())
+        except Exception:
+            logger.exception("Failed to publish app home user=%s", user_id)
 
     async def handle_assistant_thread_started(self, event: dict[str, Any], payload: dict[str, Any]) -> None:
         thread_info = self._extract_thread_info(event)
@@ -274,6 +287,77 @@ class SlackExcelBot:
             )
         except Exception:
             logger.exception("Failed to set suggested prompts channel=%s thread_ts=%s", channel, thread_ts)
+
+    @staticmethod
+    def _build_home_view() -> dict[str, Any]:
+        return {
+            "type": "home",
+            "blocks": [
+                {
+                    "type": "header",
+                    "text": {"type": "plain_text", "text": "申請アシスト", "emoji": True},
+                },
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": (
+                            "こんにちは、申請アシストです :sparkles:\n"
+                            "交通費・個人立替・勤怠の申請内容から、Excel 草稿を作成します。\n"
+                            ":station: 交通系IC利用明細のスクショ / :receipt: 領収書・請求書画像もアップロードできます。"
+                        ),
+                    },
+                },
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": (
+                            "*:toolbox: 技術スタック*\n"
+                            "• Python 3.11 + slack_sdk Socket Mode\n"
+                            "• OpenAI Responses API + Tool Calling Agent\n"
+                            "• ExcelToolService + OpenPyXL（Excel 草稿生成）\n"
+                            "• AsyncIO（同時実行制御 / スレッド単位ロック）\n"
+                            "• Docker + GitHub Actions（本番デプロイ）"
+                        ),
+                    },
+                },
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": (
+                            "*:white_check_mark: 実装済み機能*\n"
+                            "• テキスト / 画像から申請情報を抽出\n"
+                            "• 交通費・個人立替・勤怠のテンプレート自動判定\n"
+                            "• 不足項目の対話補完と Excel 草稿の再生成\n"
+                            "• Excel 草稿の自動生成 + Slack 返却"
+                        ),
+                    },
+                },
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": (
+                            "*:new: 更新履歴*\n"
+                            "*v0.1.0*（2026-03-03）\n"
+                            "• 交通費・個人立替・勤怠の基本ワークフローを提供\n"
+                            "• Slack 対話から Excel 草稿を自動生成\n"
+                            "• テンプレート選択・不足項目ヒアリングの初期版を実装\n"
+                            "*v0.2.0*（2026-03-05）\n"
+                            "• Slack/API 同時処理を強化し、50人同時利用を想定した並行処理チューニングを追加\n"
+                            "• Slack セッション保存を SQLite 化し、並行アクセス時の安定性を改善\n"
+                            "• デプロイ時に非機密 env の自動同期を追加し、設定漏れリスクを低減\n"
+                            "*v0.3.0*（2026-04-01）\n"
+                            "• Slack Home を追加し、利用案内・技術スタック・更新履歴をアプリ内で確認可能に\n"
+                            "• Docker ベースの本番運用へ移行し、Git tag 起点の自動デプロイを整備\n"
+                            "• 旧 expenses-agent を置き換え、新しい Slack Excel Bot へ本番切り替え"
+                        ),
+                    },
+                },
+            ],
+        }
 
     @staticmethod
     def _filter_context_messages(messages: list[dict[str, Any]], current_event: dict[str, Any]) -> list[dict[str, Any]]:

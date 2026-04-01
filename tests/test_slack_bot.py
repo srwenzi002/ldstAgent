@@ -7,6 +7,14 @@ from slack_excel_bot.openai_agent import OpenAIExcelAgent
 from slack_excel_bot.slack_bot import SlackExcelBot
 
 
+class FakeSlackClient:
+    def __init__(self) -> None:
+        self.published_views: list[dict[str, object]] = []
+
+    async def views_publish(self, *, user_id: str, view: dict[str, object]) -> None:
+        self.published_views.append({"user_id": user_id, "view": view})
+
+
 def build_settings(tmp_path: Path) -> Settings:
     return Settings(
         slack_bot_token="xoxb-test",
@@ -69,6 +77,36 @@ def test_handle_socket_event_schedules_message_in_background(tmp_path: Path) -> 
         await asyncio.sleep(0)
 
         assert scheduled == ["123.456:message"]
+
+    asyncio.run(scenario())
+
+
+def test_handle_socket_event_publishes_home_view(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        settings = build_settings(tmp_path)
+        tool_service = ExcelToolService(settings)
+        agent = OpenAIExcelAgent(settings, tool_service)
+        slack_client = FakeSlackClient()
+        bot = SlackExcelBot(slack_client=slack_client, agent=agent, bot_user_id="UBOT", bot_id="BBOT")
+
+        await bot.handle_socket_event(payload={"event": {"type": "app_home_opened"}}, event={"type": "app_home_opened", "user": "U123"})
+
+        assert len(slack_client.published_views) == 1
+        published = slack_client.published_views[0]
+        assert published["user_id"] == "U123"
+        view = published["view"]
+        assert isinstance(view, dict)
+        assert view["type"] == "home"
+        blocks = view["blocks"]
+        assert isinstance(blocks, list)
+        page_text = "\n".join(
+            block["text"]["text"]
+            for block in blocks
+            if isinstance(block, dict) and isinstance(block.get("text"), dict) and "text" in block["text"]
+        )
+        assert "技術スタック" in page_text
+        assert "実装済み機能" in page_text
+        assert "v0.3.0" in page_text
 
     asyncio.run(scenario())
 
