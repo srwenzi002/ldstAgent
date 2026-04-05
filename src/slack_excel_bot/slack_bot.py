@@ -68,7 +68,6 @@ class SlackExcelBot:
         channel, thread_ts = thread_info
         self.thread_contexts[thread_ts] = {"started_event": event, "payload": payload}
         logger.info("Assistant thread started channel=%s thread_ts=%s", channel, thread_ts)
-        await self._safe_set_suggested_prompts(channel, thread_ts)
 
     async def handle_assistant_thread_context_changed(self, event: dict[str, Any], payload: dict[str, Any]) -> None:
         thread_info = self._extract_thread_info(event)
@@ -273,21 +272,6 @@ class SlackExcelBot:
         except Exception:
             logger.exception("Failed to set assistant thread title channel=%s thread_ts=%s", channel, thread_ts)
 
-    async def _safe_set_suggested_prompts(self, channel: str, thread_ts: str) -> None:
-        prompts = [
-            {"title": "3月の勤務表", "message": "2026年3月の勤務表を作ってください"},
-            {"title": "交通費精算", "message": "交通履歴のスクリーンショットを送るので、交通費精算表を作ってください"},
-            {"title": "立替経費精算", "message": "個人立替経費の精算表を作ってください"},
-        ]
-        try:
-            await self.slack_client.assistant_threads_setSuggestedPrompts(
-                channel_id=channel,
-                thread_ts=thread_ts,
-                prompts=prompts,
-            )
-        except Exception:
-            logger.exception("Failed to set suggested prompts channel=%s thread_ts=%s", channel, thread_ts)
-
     @staticmethod
     def _build_home_view() -> dict[str, Any]:
         return {
@@ -341,6 +325,10 @@ class SlackExcelBot:
                         "type": "mrkdwn",
                         "text": (
                             "*:new: 更新履歴*\n"
+                            "*v0.3.1*（2026-04-05）\n"
+                            "• 勤怠表生成で月カレンダーと日本祝日を参照し、平日・土日・祝日の判定を安定化\n"
+                            "• 半休時の就業# と出退勤時刻をテンプレート規則に合わせて自動補正\n"
+                            "• 画像由来の交通費明細と経路照会まわりの補完ルールを見直し、入力の精度を改善\n"
                             "*v0.1.0*（2026-03-03）\n"
                             "• 交通費・個人立替・勤怠の基本ワークフローを提供\n"
                             "• Slack 対話から Excel 草稿を自動生成\n"

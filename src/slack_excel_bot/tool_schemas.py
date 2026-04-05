@@ -61,6 +61,13 @@ class AttendanceSheetInput(BaseModel):
     )
 
 
+class CalendarContextInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    year: int = Field(ge=2000, le=2100, description="対象年。")
+    month: int = Field(ge=1, le=12, description="対象月。1-12。")
+
+
 class TransportItemInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

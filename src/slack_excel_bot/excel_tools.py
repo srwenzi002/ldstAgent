@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+import calendar
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Any
+
+import holidays
 
 from slack_excel_bot.config import Settings
 from slack_excel_bot.ekispert_client import EkispertError, EkispertMcpClient
 from slack_excel_bot.excel_writer import DraftWriteResult, ExcelWriter
 from slack_excel_bot.tool_schemas import (
     AttendanceDayOverride,
+    CalendarContextInput,
     AttendanceSheetInput,
     ExpenseEvidenceAnalysisInput,
     EmployeeInput,
@@ -37,6 +42,12 @@ class GeneratedWorkbook:
 
 class ExcelToolService:
     FARE_TOLERANCE_JPY = 10.0
+    WORK_GRADE_SCHEDULES = {
+        1: {"clock_in": "09:30", "clock_out": "18:00", "half_day_cutoff": "12:30"},
+        2: {"clock_in": "09:00", "clock_out": "17:30", "half_day_cutoff": "12:00"},
+        3: {"clock_in": "10:00", "clock_out": "18:30", "half_day_cutoff": "13:00"},
+        4: {"clock_in": "10:30", "clock_out": "19:00", "half_day_cutoff": "13:30"},
+    }
 
     def __init__(self, settings: Settings):
         package_dir = Path(__file__).resolve().parent
@@ -64,6 +75,36 @@ class ExcelToolService:
             title=self._build_attendance_title(payload),
             payload=payload,
         ).as_tool_output()
+
+    def get_month_calendar_context(self, raw_args: dict[str, Any]) -> dict[str, Any]:
+        args = CalendarContextInput.model_validate(raw_args)
+        jp_holidays = holidays.Japan(years=[args.year], language="ja")
+        weekday_labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        month_days = calendar.monthrange(args.year, args.month)[1]
+        days: list[dict[str, Any]] = []
+
+        for day in range(1, month_days + 1):
+            current = date(args.year, args.month, day)
+            weekday_index = current.weekday()
+            holiday_name = jp_holidays.get(current)
+            days.append(
+                {
+                    "date": current.isoformat(),
+                    "day": day,
+                    "weekday": weekday_labels[weekday_index],
+                    "is_weekend": weekday_index >= 5,
+                    "is_holiday": holiday_name is not None,
+                    "holiday_name": holiday_name,
+                }
+            )
+
+        return {
+            "ok": True,
+            "title": "月次カレンダー情報",
+            "year": args.year,
+            "month": args.month,
+            "days": days,
+        }
 
     def generate_transport_sheet(self, raw_args: dict[str, Any]) -> dict[str, Any]:
         args = TransportSheetInput.model_validate(raw_args)
@@ -254,9 +295,34 @@ class ExcelToolService:
         return f"Ldjpw668_{yymm}_{employee['department_code']}_{employee['employee_id']}_{employee['name']}"
 
     def _build_attendance_items(self, args: AttendanceSheetInput) -> list[dict[str, Any]]:
-        items = [item.model_dump(mode="json", exclude_none=True) for item in args.days]
+        items = [self._normalize_attendance_item(item) for item in args.days]
         items.sort(key=lambda item: int(item["day"]))
         return items
+
+    def _normalize_attendance_item(self, item: AttendanceDayOverride) -> dict[str, Any]:
+        normalized = item.model_dump(mode="json", exclude_none=True)
+        work_grade = normalized.get("work_grade")
+        if work_grade is None:
+            return normalized
+
+        schedule = self.WORK_GRADE_SCHEDULES.get(int(work_grade))
+        if schedule is None:
+            return normalized
+
+        leave_item_no = normalized.get("leave_item_no")
+        if leave_item_no == 2:
+            normalized["clock_in"] = schedule["half_day_cutoff"]
+            normalized["clock_out"] = schedule["clock_out"]
+            return normalized
+
+        if leave_item_no == 3:
+            normalized["clock_in"] = schedule["clock_in"]
+            normalized["clock_out"] = schedule["half_day_cutoff"]
+            return normalized
+
+        normalized.setdefault("clock_in", schedule["clock_in"])
+        normalized.setdefault("clock_out", schedule["clock_out"])
+        return normalized
 
     @staticmethod
     def _normalize_transport_item(item) -> dict[str, Any]:

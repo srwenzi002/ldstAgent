@@ -219,6 +219,56 @@ def test_attendance_tool_writes_half_day_leave_directly(tmp_path: Path) -> None:
     assert ws["G17"].value is not None
 
 
+def test_attendance_tool_normalizes_half_day_times_by_work_grade_cutoff(tmp_path: Path) -> None:
+    settings = build_settings(tmp_path)
+    service = ExcelToolService(settings)
+
+    result = service.generate_attendance_sheet(
+        {
+            "year": 2026,
+            "month": 3,
+            "employee": {"department_code": "51", "employee_id": "0001", "name": "山田太郎"},
+            "days": [
+                {"day": 2, "leave_item_no": 2, "work_grade": 1},
+                {"day": 3, "leave_item_no": 3, "work_grade": 4},
+            ],
+        }
+    )
+
+    items = result["payload"]["items"]
+    assert items[0]["clock_in"] == "12:30"
+    assert items[0]["clock_out"] == "18:00"
+    assert items[1]["clock_in"] == "10:30"
+    assert items[1]["clock_out"] == "13:30"
+
+
+def test_month_calendar_context_marks_weekend_and_japanese_holiday(tmp_path: Path) -> None:
+    settings = build_settings(tmp_path)
+    service = ExcelToolService(settings)
+
+    result = service.get_month_calendar_context({"year": 2026, "month": 3})
+
+    assert result["ok"] is True
+    assert result["title"] == "月次カレンダー情報"
+
+    day20 = next(item for item in result["days"] if item["day"] == 20)
+    day21 = next(item for item in result["days"] if item["day"] == 21)
+    day23 = next(item for item in result["days"] if item["day"] == 23)
+
+    assert day20["weekday"] == "Fri"
+    assert day20["is_weekend"] is False
+    assert day20["is_holiday"] is True
+    assert day20["holiday_name"] == "春分の日"
+
+    assert day21["weekday"] == "Sat"
+    assert day21["is_weekend"] is True
+    assert day21["is_holiday"] is False
+
+    assert day23["weekday"] == "Mon"
+    assert day23["is_weekend"] is False
+    assert day23["is_holiday"] is False
+
+
 def test_personal_expense_tool_generates_workbook(tmp_path: Path) -> None:
     settings = build_settings(tmp_path)
     service = ExcelToolService(settings)

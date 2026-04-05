@@ -13,6 +13,7 @@ from slack_excel_bot.debug_trace import DebugTrace
 from slack_excel_bot.excel_tools import ExcelToolService
 from slack_excel_bot.tool_schemas import (
     AttendanceSheetInput,
+    CalendarContextInput,
     ExpenseEvidenceAnalysisInput,
     PersonalExpenseSheetInput,
     TransportRouteBatchLookupInput,
@@ -34,6 +35,16 @@ class OpenAIExcelAgent:
         self.tool_service = tool_service
         self.tools = [
             openai_function_tool(
+                "get_month_calendar_context",
+                (
+                    "日本の月次カレンダー情報を返します。"
+                    "指定した year と month に対して、各日の曜日、土日かどうか、日本の祝日かどうか、祝日名を返します。"
+                    "勤務表を作るときに、平日・土日・祝日の区別が必要なら、generate_attendance_sheet の前に必ずこのツールを使ってください。"
+                    "月全体を『平日通常・土日休み』のように展開する場合、曜日や祝日の判断を自分で決めつけず、このツール結果を根拠にしてください。"
+                ),
+                CalendarContextInput,
+            ),
+            openai_function_tool(
                 "generate_attendance_sheet",
                 (
                     "日本向けの月次勤務表を作成します。"
@@ -46,6 +57,13 @@ class OpenAIExcelAgent:
                     "休日出勤の場合は、days[].work_grade を入力しないでください。"
                     "半休ではない休暇（全休・代休・振休など）の場合も、days[].work_grade を入力しないでください。"
                     "つまり work_grade を入れるのは通常勤務日と半休日のみです。"
+                    "基本勤務時間が指定されている場合、通常勤務日には work_grade だけでなく clock_in と clock_out も必ず入力してください。"
+                    "work_grade を入力した日には、必ずその日に対応する clock_in と clock_out も入力してください。"
+                    "半休（days[].leave_item_no が 2 または 3）の場合は、work_grade に対応する定時を基準に、その半休区分に合わせた実勤務時間を clock_in と clock_out に入れてください。"
+                    "つまり午前休なら午後勤務の開始・終了時刻、午後休なら午前勤務の開始・終了時刻を入れてください。"
+                    "半休の時間境界はテンプレートの半休区切を使ってください。1 は 12:30、2 は 12:00、3 は 13:00、4 は 13:30 です。"
+                    "ユーザーが例外として明示していない日本の祝日は、既定で休みとして扱ってください。"
+                    "つまり『平日通常・土日休み』のような指定でも、祝日に特別な勤務指定がなければ work_grade と clock_in と clock_out を入れないでください。"
                     "schema にない項目は出力しないでください。"
                 ),
                 AttendanceSheetInput,
@@ -127,6 +145,7 @@ class OpenAIExcelAgent:
             ),
         ]
         self.handlers: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
+            "get_month_calendar_context": self.tool_service.get_month_calendar_context,
             "generate_attendance_sheet": self.tool_service.generate_attendance_sheet,
             "analyze_expense_evidence": self.tool_service.analyze_expense_evidence,
             "lookup_transport_route_batch": self.tool_service.lookup_transport_route_batch,
@@ -162,6 +181,8 @@ class OpenAIExcelAgent:
             "勤務表、交通費精算表、個人立替経費精算表の依頼なら、必要に応じてツールを使ってください。"
             "ツールを使う場合、JSON は function call arguments の中だけに置き、会話本文には絶対に出さないでください。"
             f"現在の日本時間の日付は {today_jst.isoformat()} です。今日・昨日・一昨日などの相対表現は、必ず絶対日付に直してからツールに渡してください。"
+            "勤務表の依頼で、月全体の通常勤務を平日・土日・祝日ベースで展開する必要がある場合は、まず get_month_calendar_context を呼び出してください。"
+            "平日・土日・祝日の判断を会話文だけで決めつけず、calendar tool の結果を見てから days を組み立ててください。"
             "交通費精算では purpose が不明なら 営業活動 を既定値として扱います。"
             "移動が1回だけ書かれていて往復か片道か不明な場合は、まず片道として扱います。"
             "電車・地下鉄・バスなどの公共交通はすべて 電車・バス に統一します。"
@@ -282,6 +303,10 @@ class OpenAIExcelAgent:
     @staticmethod
     def _status_for_tool_name(tool_name: str) -> tuple[str, list[str]]:
         status_map = {
+            "get_month_calendar_context": (
+                "is checking calendar...",
+                ["📆 月のカレンダーを確認中です", "🎌 祝日と曜日を整理しています"],
+            ),
             "analyze_expense_evidence": (
                 "is analyzing evidence...",
                 ["🧾 画像の内容を確認中です", "✨ 証憑の項目を整理しています"],
