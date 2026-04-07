@@ -136,7 +136,7 @@ class SlackExcelBot:
                 thread_ts=thread_ts,
             )
             await self._safe_set_status(channel, thread_ts, "")
-            await self._safe_set_title(channel, thread_ts, event.get("text") or "申請アシスト")
+            await self._safe_set_title(channel, thread_ts, event.get("text") or "精算くん")
             trace.write_section(
                 "slack_reply",
                 {"channel": channel, "thread_ts": thread_ts, "text": result.text},
@@ -279,14 +279,14 @@ class SlackExcelBot:
             "blocks": [
                 {
                     "type": "header",
-                    "text": {"type": "plain_text", "text": "申請アシスト", "emoji": True},
+                    "text": {"type": "plain_text", "text": "精算くん", "emoji": True},
                 },
                 {
                     "type": "section",
                     "text": {
                         "type": "mrkdwn",
                         "text": (
-                            "こんにちは、申請アシストです :sparkles:\n"
+                            "こんにちは、精算くんです :sparkles:\n"
                             "交通費・個人立替・勤怠の申請内容から、Excel 草稿を作成します。\n"
                             ":station: 交通系IC利用明細のスクショ / :receipt: 領収書・請求書画像もアップロードできます。"
                         ),
@@ -325,22 +325,26 @@ class SlackExcelBot:
                         "type": "mrkdwn",
                         "text": (
                             "*:new: 更新履歴*\n"
-                            "*v0.3.1*（2026-04-05）\n"
+                            "*v0.3.2* (2026-04-07)\n"
+                            "• アプリの表示名を「精算くん」に統一し、旧名称のユーザー向け表示を整理\n"
+                            "• Slack Home の更新履歴を新しい順に並べ替え、表示順を見直し\n"
+                            "• バージョン見出しの書式を調整し、Slack 上で読みやすい表示に改善\n\n"
+                            "*v0.3.1* (2026-04-05)\n"
                             "• 勤怠表生成で月カレンダーと日本祝日を参照し、平日・土日・祝日の判定を安定化\n"
                             "• 半休時の就業# と出退勤時刻をテンプレート規則に合わせて自動補正\n"
-                            "• 画像由来の交通費明細と経路照会まわりの補完ルールを見直し、入力の精度を改善\n"
-                            "*v0.1.0*（2026-03-03）\n"
-                            "• 交通費・個人立替・勤怠の基本ワークフローを提供\n"
-                            "• Slack 対話から Excel 草稿を自動生成\n"
-                            "• テンプレート選択・不足項目ヒアリングの初期版を実装\n"
-                            "*v0.2.0*（2026-03-05）\n"
-                            "• Slack/API 同時処理を強化し、50人同時利用を想定した並行処理チューニングを追加\n"
-                            "• Slack セッション保存を SQLite 化し、並行アクセス時の安定性を改善\n"
-                            "• デプロイ時に非機密 env の自動同期を追加し、設定漏れリスクを低減\n"
-                            "*v0.3.0*（2026-04-01）\n"
+                            "• 画像由来の交通費明細と経路照会まわりの補完ルールを見直し、入力の精度を改善\n\n"
+                            "*v0.3.0* (2026-04-01)\n"
                             "• Slack Home を追加し、利用案内・技術スタック・更新履歴をアプリ内で確認可能に\n"
                             "• Docker ベースの本番運用へ移行し、Git tag 起点の自動デプロイを整備\n"
-                            "• 旧 expenses-agent を置き換え、新しい Slack Excel Bot へ本番切り替え"
+                            "• 旧 expenses-agent を置き換え、新しい精算くんへ本番切り替え\n\n"
+                            "*v0.2.0* (2026-03-05)\n"
+                            "• Slack/API 同時処理を強化し、50人同時利用を想定した並行処理チューニングを追加\n"
+                            "• Slack セッション保存を SQLite 化し、並行アクセス時の安定性を改善\n"
+                            "• デプロイ時に非機密 env の自動同期を追加し、設定漏れリスクを低減\n\n"
+                            "*v0.1.0* (2026-03-03)\n"
+                            "• 交通費・個人立替・勤怠の基本ワークフローを提供\n"
+                            "• Slack 対話から Excel 草稿を自動生成\n"
+                            "• テンプレート選択・不足項目ヒアリングの初期版を実装"
                         ),
                     },
                 },

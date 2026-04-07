@@ -1,6 +1,6 @@
 [project]
 name = "slack-excel-bot"
-version = "0.3.1"
+version = "0.3.2"
 description = "Slack chatbot that uses OpenAI tool calling to generate Excel templates."
 requires-python = ">=3.11"
 dependencies = [

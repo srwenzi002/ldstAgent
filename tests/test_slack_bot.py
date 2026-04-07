@@ -106,7 +106,8 @@ def test_handle_socket_event_publishes_home_view(tmp_path: Path) -> None:
         )
         assert "技術スタック" in page_text
         assert "実装済み機能" in page_text
-        assert "v0.3.1" in page_text
+        assert "精算くん" in page_text
+        assert "v0.3.2" in page_text
         assert "v0.3.0" in page_text
 
     asyncio.run(scenario())

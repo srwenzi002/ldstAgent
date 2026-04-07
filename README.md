@@ -1,6 +1,6 @@
-# Slack Excel Bot
+# 精算くん
 
-这是一个全新的 Slack chatbot 项目，用来在 1 对 1 会话里读取用户输入的文字和图片，交给 OpenAI LLM 判断意图并调用 Excel 生成工具，最后把生成好的文件上传回 Slack 会话。
+这是一个名为 `精算くん` 的 Slack chatbot 项目，用来在 1 对 1 会话里读取用户输入的文字和图片，交给 OpenAI LLM 判断意图并调用 Excel 生成工具，最后把生成好的文件上传回 Slack 会话。
 
 当前项目只保留 `Socket Mode`，不再依赖 HTTP Events 回调。
 
