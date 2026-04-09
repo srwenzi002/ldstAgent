@@ -34,6 +34,10 @@ class AgentResult:
 
 
 class OpenAIExcelAgent:
+    MAX_TOOL_ROUNDS = 10
+    MAX_STATION_LOOKUPS_PER_REQUEST = 3
+    MAX_ROUTE_QUERY_RETRIES_PER_REQUEST = 3
+
     def __init__(self, settings: Settings, tool_service: ExcelToolService):
         self.settings = settings
         self.tool_service = tool_service
@@ -301,13 +305,16 @@ class OpenAIExcelAgent:
         generated_files: list[dict[str, Any]] = []
         station_lookup_calls = 0
         route_retry_error_calls = 0
+        station_lookup_history: list[dict[str, Any]] = []
+        route_retry_contexts: list[dict[str, Any]] = []
 
-        for round_index in range(5):
+        for round_index in range(self.MAX_TOOL_ROUNDS):
             function_calls = [item for item in response.output if item.type == "function_call"]
             if not function_calls:
                 return AgentResult(text=response.output_text.strip() or "はいっ、進めますね🌷", generated_files=generated_files)
 
             tool_outputs = []
+            should_force_station_confirmation = False
             for call in function_calls:
                 if status_callback is not None:
                     status_text, loading_messages = self._status_for_tool_name(call.name)
@@ -316,7 +323,7 @@ class OpenAIExcelAgent:
                 arguments = json.loads(call.arguments)
                 if call.name == "lookup_station_candidates":
                     station_lookup_calls += 1
-                    if station_lookup_calls > 3:
+                    if station_lookup_calls > self.MAX_STATION_LOOKUPS_PER_REQUEST:
                         result = {
                             "ok": False,
                             "title": "駅名候補",
@@ -331,12 +338,24 @@ class OpenAIExcelAgent:
                 else:
                     result = handler(arguments)
 
+                if call.name == "lookup_station_candidates" and isinstance(result, dict):
+                    station_lookup_history.append(
+                        {
+                            "station_name": result.get("station_name") or arguments.get("station_name"),
+                            "prefix_hint": result.get("prefix_hint"),
+                            "query_variants": result.get("query_variants") or [],
+                            "auto_selected_station_name": result.get("auto_selected_station_name"),
+                            "candidates": result.get("candidates") or [],
+                        }
+                    )
+
                 if call.name in {"lookup_transport_route_batch", "lookup_transport_route_options"} and isinstance(result, dict):
                     prompt_reason = result.get("prompt_reason")
                     error_text = str(result.get("error") or "")
+                    route_retry_contexts.extend(self._extract_route_retry_contexts(call.name, arguments, result))
                     if prompt_reason == "query_error" or "駅名が見つかりません" in error_text:
                         route_retry_error_calls += 1
-                        if route_retry_error_calls > 3:
+                        if route_retry_error_calls >= self.MAX_ROUTE_QUERY_RETRIES_PER_REQUEST:
                             result = {
                                 **result,
                                 "ok": False,
@@ -348,6 +367,9 @@ class OpenAIExcelAgent:
                                     "以降は候補をまとめてユーザー確認に切り替えてください。"
                                 ).strip(),
                             }
+                            should_force_station_confirmation = True
+                if isinstance(result, dict) and result.get("prompt_reason") == "station_candidate_lookup_limit_reached":
+                    should_force_station_confirmation = True
                 if result.get("output_path"):
                     generated_files.append(result)
                 if trace is not None:
@@ -365,6 +387,15 @@ class OpenAIExcelAgent:
                         "call_id": call.call_id,
                         "output": json.dumps(self._tool_result_summary(result), ensure_ascii=False),
                     }
+                )
+
+            if should_force_station_confirmation:
+                return AgentResult(
+                    text=self._build_station_confirmation_fallback(
+                        route_retry_contexts=route_retry_contexts,
+                        station_lookup_history=station_lookup_history,
+                    ),
+                    generated_files=generated_files,
                 )
 
             if trace is not None:
@@ -389,7 +420,10 @@ class OpenAIExcelAgent:
                 trace.write_section(f"openai_followup_response_{round_index + 2}", response)
 
         return AgentResult(
-            text="処理は進めましたが、このリクエストではツール呼び出し回数の上限に達しました…！🙏 入力を少し整理して、もう一度試してください。",
+            text=self._build_station_confirmation_fallback(
+                route_retry_contexts=route_retry_contexts,
+                station_lookup_history=station_lookup_history,
+            ),
             generated_files=generated_files,
         )
 
@@ -397,51 +431,51 @@ class OpenAIExcelAgent:
     def _status_for_tool_name(tool_name: str) -> tuple[str, list[str]]:
         status_map = {
             "get_month_calendar_context": (
-                "is checking calendar...",
-                ["📆 月のカレンダーを確認中です", "🎌 祝日と曜日を整理しています"],
+                "is working...",
+                ["STEP 1/4 月のカレンダーを確認しています"],
             ),
             "analyze_expense_evidence": (
-                "is analyzing evidence...",
-                ["🧾 画像の内容を確認中です", "✨ 証憑の項目を整理しています"],
+                "is working...",
+                ["STEP 1/4 画像と会話内容を確認しています"],
             ),
             "lookup_transport_route_batch": (
-                "is checking routes...",
-                ["🚃 経路と運賃を確認中です", "💴 金額を照合しています"],
+                "is working...",
+                ["STEP 2/4 経路と運賃を照会しています"],
             ),
             "upsert_transport_draft": (
-                "is updating draft...",
-                ["🧠 交通費草稿を更新中です", "🗂️ 最新版の状態を整理しています"],
+                "is working...",
+                ["STEP 3/4 交通費草稿を更新しています"],
             ),
             "lookup_station_candidates": (
-                "is checking station names...",
-                ["🚉 駅名候補を確認中です", "🔎 表記ゆれを照合しています"],
+                "is working...",
+                ["STEP 2/4 駅名候補を確認しています"],
             ),
             "lookup_transport_route_options": (
-                "is checking routes...",
-                ["🚃 経路と運賃を確認中です", "🗂️ 候補をまとめています"],
+                "is working...",
+                ["STEP 2/4 経路候補を確認しています"],
             ),
             "generate_transport_sheet": (
-                "is generating Excel...",
-                ["📝 交通費精算表を作成中です", "📎 Excel を仕上げています"],
+                "is working...",
+                ["STEP 4/4 交通費精算表を作成しています"],
             ),
             "upsert_personal_expense_draft": (
-                "is updating draft...",
-                ["🧠 個人立替草稿を更新中です", "🗂️ 最新版の状態を整理しています"],
+                "is working...",
+                ["STEP 3/4 個人立替草稿を更新しています"],
             ),
             "generate_personal_expense_sheet": (
-                "is generating Excel...",
-                ["🧮 経費精算表を作成中です", "📎 Excel を仕上げています"],
+                "is working...",
+                ["STEP 4/4 個人立替経費精算表を作成しています"],
             ),
             "upsert_attendance_draft": (
-                "is updating draft...",
-                ["🧠 勤務表草稿を更新中です", "🗂️ 最新版の状態を整理しています"],
+                "is working...",
+                ["STEP 3/4 勤務表草稿を更新しています"],
             ),
             "generate_attendance_sheet": (
-                "is generating Excel...",
-                ["📅 勤務データを整理中です", "📎 Excel を仕上げています"],
+                "is working...",
+                ["STEP 4/4 勤務表を作成しています"],
             ),
         }
-        return status_map.get(tool_name, ("is thinking...", ["🌷 ご依頼を処理しています"]))
+        return status_map.get(tool_name, ("is working...", ["STEP 1/4 ご依頼を処理しています"]))
 
     @staticmethod
     def _tool_result_summary(result: dict[str, Any]) -> dict[str, Any]:
@@ -452,3 +486,119 @@ class OpenAIExcelAgent:
                 "message": "Excel ファイルができました。現在の Slack スレッドへ自動でアップロードします。",
             }
         return result
+
+    @staticmethod
+    def _extract_route_retry_contexts(
+        tool_name: str,
+        arguments: dict[str, Any],
+        result: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        contexts: list[dict[str, Any]] = []
+        if tool_name == "lookup_transport_route_options":
+            contexts.append(
+                {
+                    "travel_date": result.get("travel_date") or arguments.get("travel_date"),
+                    "route_from": result.get("route_from") or arguments.get("route_from"),
+                    "route_to": result.get("route_to") or arguments.get("route_to"),
+                    "image_one_way_amount": result.get("image_one_way_amount") or arguments.get("one_way_amount"),
+                    "error": result.get("error"),
+                }
+            )
+            return contexts
+
+        for item in result.get("items") or []:
+            if not isinstance(item, dict):
+                continue
+            contexts.append(
+                {
+                    "travel_date": item.get("travel_date"),
+                    "route_from": item.get("route_from"),
+                    "route_to": item.get("route_to"),
+                    "image_one_way_amount": item.get("image_one_way_amount"),
+                    "error": item.get("error"),
+                }
+            )
+        if contexts:
+            return contexts
+
+        for item in arguments.get("items") or []:
+            if not isinstance(item, dict):
+                continue
+            contexts.append(
+                {
+                    "travel_date": item.get("travel_date"),
+                    "route_from": item.get("route_from"),
+                    "route_to": item.get("route_to"),
+                    "image_one_way_amount": item.get("one_way_amount"),
+                    "error": result.get("error"),
+                }
+            )
+        return contexts
+
+    @classmethod
+    def _build_station_confirmation_fallback(
+        cls,
+        *,
+        route_retry_contexts: list[dict[str, Any]],
+        station_lookup_history: list[dict[str, Any]],
+    ) -> str:
+        route_lines: list[str] = []
+        seen_routes: set[tuple[Any, ...]] = set()
+        for context in route_retry_contexts:
+            route_key = (
+                context.get("travel_date"),
+                context.get("route_from"),
+                context.get("route_to"),
+                context.get("image_one_way_amount"),
+            )
+            if route_key in seen_routes:
+                continue
+            seen_routes.add(route_key)
+            line = f"{context.get('travel_date') or '日付不明'} {context.get('route_from') or '?'} → {context.get('route_to') or '?'}"
+            amount = context.get("image_one_way_amount")
+            if amount not in (None, ""):
+                line += f" / {amount}円"
+            route_lines.append(line)
+
+        station_lines: list[str] = []
+        seen_stations: set[str] = set()
+        for lookup in station_lookup_history:
+            station_name = str(lookup.get("station_name") or "").strip()
+            if not station_name or station_name in seen_stations:
+                continue
+            seen_stations.add(station_name)
+            candidate_names = []
+            for candidate in lookup.get("candidates") or []:
+                if not isinstance(candidate, dict):
+                    continue
+                candidate_name = str(candidate.get("station_name") or "").strip()
+                if candidate_name and candidate_name not in candidate_names:
+                    candidate_names.append(candidate_name)
+                if len(candidate_names) >= 3:
+                    break
+            if candidate_names:
+                station_lines.append(f"{station_name}: " + " / ".join(candidate_names))
+            else:
+                station_lines.append(f"{station_name}: 候補なし")
+
+        if station_lines:
+            station_block = "\n".join(f"- {line}" for line in station_lines)
+            route_block = "\n".join(f"- {line}" for line in route_lines) if route_lines else "- 該当明細を特定中です"
+            return (
+                "駅名の補正をここまで試しましたが、この場では確定しきれませんでした。"
+                "近い候補駅名をまとめるので、正しい駅名を教えてください。\n\n"
+                "確認したい区間\n"
+                f"{route_block}\n\n"
+                "駅名候補\n"
+                f"{station_block}"
+            )
+
+        if route_lines:
+            route_block = "\n".join(f"- {line}" for line in route_lines)
+            return (
+                "駅名の補正を試しましたが、この場では確定しきれませんでした。"
+                "次の区間について、正しい駅名をそのまま教えてください。\n\n"
+                f"{route_block}"
+            )
+
+        return "駅名の補正を試しましたが、この場では確定しきれませんでした。正しい駅名を教えてください。"

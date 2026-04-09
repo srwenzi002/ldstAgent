@@ -182,8 +182,8 @@ def test_agent_status_mapping_for_route_lookup(tmp_path: Path) -> None:
 
     status, messages = agent._status_for_tool_name("lookup_transport_route_batch")
 
-    assert status == "is checking routes..."
-    assert messages == ["🚃 経路と運賃を確認中です", "💴 金額を照合しています"]
+    assert status == "is working..."
+    assert messages == ["STEP 2/4 経路と運賃を照会しています"]
 
 
 def test_agent_status_mapping_for_attendance_generation(tmp_path: Path) -> None:
@@ -193,8 +193,8 @@ def test_agent_status_mapping_for_attendance_generation(tmp_path: Path) -> None:
 
     status, messages = agent._status_for_tool_name("generate_attendance_sheet")
 
-    assert status == "is generating Excel..."
-    assert messages == ["📅 勤務データを整理中です", "📎 Excel を仕上げています"]
+    assert status == "is working..."
+    assert messages == ["STEP 4/4 勤務表を作成しています"]
 
 
 def test_auto_generate_ready_transport_draft_uses_full_state(tmp_path: Path) -> None:
@@ -239,3 +239,108 @@ def test_auto_generate_ready_transport_draft_uses_full_state(tmp_path: Path) -> 
     assert generated[0]["template_id"] == "transport_jp_leadingsoft_v1"
     draft = bot.thread_store.get_draft("thread-1", "transport")
     assert draft["latest_generated_file"]["title"] == generated[0]["title"]
+
+
+def test_agent_limits_route_retry_chain_after_second_query_error(tmp_path: Path, monkeypatch) -> None:
+    settings = build_settings(tmp_path)
+    tool_service = ExcelToolService(settings)
+    agent = OpenAIExcelAgent(settings, tool_service)
+
+    class StubResponse:
+        def __init__(self, response_id, output, output_text=""):
+            self.id = response_id
+            self.output = output
+            self.output_text = output_text
+
+    class FakeResponses:
+        def __init__(self):
+            self.calls = 0
+
+        def create(self, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return StubResponse(
+                    "resp-1",
+                    [
+                        type(
+                            "FunctionCall",
+                            (),
+                            {
+                                "type": "function_call",
+                                "name": "lookup_transport_route_batch",
+                                "arguments": '{"items":[{"travel_date":"2026-04-06","route_from":"早稲田","route_to":"日本橋","one_way_amount":178,"route_line":null}],"top_k":3}',
+                                "call_id": "call-1",
+                            },
+                        )()
+                    ],
+                )
+            if self.calls == 2:
+                return StubResponse(
+                    "resp-2",
+                    [
+                        type(
+                            "FunctionCall",
+                            (),
+                            {
+                                "type": "function_call",
+                                "name": "lookup_station_candidates",
+                                "arguments": '{"station_name":"日本橋","top_k":5,"prefecture_code":"13","match_type":"partial","station_type":"train"}',
+                                "call_id": "call-2",
+                            },
+                        )()
+                    ],
+                )
+            if self.calls == 3:
+                return StubResponse(
+                    "resp-3",
+                    [
+                        type(
+                            "FunctionCall",
+                            (),
+                            {
+                                "type": "function_call",
+                                "name": "lookup_transport_route_batch",
+                                "arguments": '{"items":[{"travel_date":"2026-04-06","route_from":"早稲田(東京メトロ)","route_to":"日本橋","one_way_amount":178,"route_line":null}],"top_k":3}',
+                                "call_id": "call-3",
+                            },
+                        )()
+                    ],
+                )
+            return StubResponse("resp-4", [], "候補が絞れないため、駅名確認に切り替えます。")
+
+    class FakeClient:
+        def __init__(self):
+            self.responses = FakeResponses()
+
+    monkeypatch.setattr("slack_excel_bot.openai_agent.OpenAI", lambda api_key: FakeClient())
+
+    def fake_lookup_transport_route_batch(args):
+        route_from = args["items"][0]["route_from"]
+        return {
+            "ok": False,
+            "title": "交通経路の一括確認結果",
+            "has_partial_failures": True,
+            "resolved_items": [],
+            "round_trip_suggestions": [],
+            "needs_confirmation": [],
+            "items": [],
+            "prompt_reason": "query_error",
+            "error": f'{{"status":400,"message":"駅名が見つかりません。({route_from})"}}',
+        }
+
+    def fake_lookup_station_candidates(args):
+        return {
+            "ok": True,
+            "title": "駅名候補",
+            "station_name": args["station_name"],
+            "candidates": [{"station_name": "日本橋(東京都)"}],
+        }
+
+    agent.handlers["lookup_transport_route_batch"] = fake_lookup_transport_route_batch
+    agent.handlers["lookup_station_candidates"] = fake_lookup_station_candidates
+
+    result = agent.run(
+        conversation_input=[{"role": "user", "content": [{"type": "input_text", "text": "交通履歴を確認して"}]}]
+    )
+
+    assert "駅名確認" in result.text
