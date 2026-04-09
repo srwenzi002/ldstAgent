@@ -16,6 +16,7 @@ from slack_excel_bot.tool_schemas import (
     CalendarContextInput,
     ExpenseEvidenceAnalysisInput,
     PersonalExpenseSheetInput,
+    StationCandidateLookupInput,
     TransportRouteBatchLookupInput,
     TransportRouteLookupInput,
     TransportSheetInput,
@@ -88,6 +89,16 @@ class OpenAIExcelAgent:
                 ExpenseEvidenceAnalysisInput,
             ),
             openai_function_tool(
+                "lookup_station_candidates",
+                (
+                    "曖昧な駅名、OCR の誤読、途中で切れた駅名、省略表記から駅候補を列挙します。"
+                    "駅名が見つかりませんというエラーが出たとき、route_from または route_to を補正する前に使ってください。"
+                    "既知の駅名をそのまま route search に投げる前提ではなく、候補駅の絞り込み用です。"
+                    "結果はユーザー確認にも使えますが、高い確信で 1 候補に絞れる場合は route 検索へ戻ってください。"
+                ),
+                StationCandidateLookupInput,
+            ),
+            openai_function_tool(
                 "lookup_transport_route_batch",
                 (
                     "複数の交通明細について、経路候補と金額候補をまとめて照合します。"
@@ -148,6 +159,7 @@ class OpenAIExcelAgent:
             "get_month_calendar_context": self.tool_service.get_month_calendar_context,
             "generate_attendance_sheet": self.tool_service.generate_attendance_sheet,
             "analyze_expense_evidence": self.tool_service.analyze_expense_evidence,
+            "lookup_station_candidates": self.tool_service.lookup_station_candidates,
             "lookup_transport_route_batch": self.tool_service.lookup_transport_route_batch,
             "lookup_transport_route_options": self.tool_service.lookup_transport_route_options,
             "generate_transport_sheet": self.tool_service.generate_transport_sheet,
@@ -195,6 +207,7 @@ class OpenAIExcelAgent:
             "batch 結果に needs_confirmation が 1 件でもある場合は、表を先に作成したとしても、そのまま黙って終わらせないでください。"
             "その場合は返信内に必ず『今回まだ表に入れていない項目』または『確認したい項目』のコードブロックを作り、未反映の明細・理由・必要な確認内容を明記してください。"
             "lookup_transport_route_batch または lookup_transport_route_options の結果に prompt_reason='query_error' が含まれる、または error に『駅名が見つかりません』が含まれる場合、その明細をすぐ未反映にして最終回答を作ってはいけません。"
+            "駅名エラーのときは、必要に応じて lookup_station_candidates を使い、候補駅名を調べてから route 検索を再試行してください。"
             "その場合は、error に含まれる駅名、元の画像テキスト、transport_events、transport_items、前後の記録、一般的な駅名表記を手がかりに、どの駅名が省略・略記・誤読・表記ゆれなのかを考えてください。"
             "高い確信で補完または正規化できる場合は、route_from または route_to の駅名だけを修正して、同じ lookup_transport_route_batch または lookup_transport_route_options をもう一度呼び出してください。"
             "query_error を受け取った直後に最終回答を作らず、まず再照会のための function call を優先してください。"
@@ -241,6 +254,8 @@ class OpenAIExcelAgent:
         if trace is not None:
             trace.write_section("openai_response_1", response)
         generated_files: list[dict[str, Any]] = []
+        station_lookup_calls = 0
+        route_retry_error_calls = 0
 
         for round_index in range(5):
             function_calls = [item for item in response.output if item.type == "function_call"]
@@ -254,7 +269,40 @@ class OpenAIExcelAgent:
                     status_callback(status_text, loading_messages)
                 handler = self.handlers[call.name]
                 arguments = json.loads(call.arguments)
-                result = handler(arguments)
+                if call.name == "lookup_station_candidates":
+                    station_lookup_calls += 1
+                    if station_lookup_calls > 3:
+                        result = {
+                            "ok": False,
+                            "title": "駅名候補",
+                            "station_name": arguments.get("station_name"),
+                            "candidates": [],
+                            "error": "station_candidate_lookup_limit_reached",
+                            "should_prompt_user": True,
+                            "prompt_reason": "station_candidate_lookup_limit_reached",
+                        }
+                    else:
+                        result = handler(arguments)
+                else:
+                    result = handler(arguments)
+
+                if call.name in {"lookup_transport_route_batch", "lookup_transport_route_options"} and isinstance(result, dict):
+                    prompt_reason = result.get("prompt_reason")
+                    error_text = str(result.get("error") or "")
+                    if prompt_reason == "query_error" or "駅名が見つかりません" in error_text:
+                        route_retry_error_calls += 1
+                        if route_retry_error_calls > 3:
+                            result = {
+                                **result,
+                                "ok": False,
+                                "should_prompt_user": True,
+                                "prompt_reason": "route_retry_limit_reached",
+                                "error": (
+                                    f"{error_text}\n"
+                                    "route_retry_limit_reached: 駅名補正の再試行上限に達しました。"
+                                    "以降は候補をまとめてユーザー確認に切り替えてください。"
+                                ).strip(),
+                            }
                 if result.get("output_path"):
                     generated_files.append(result)
                 if trace is not None:
@@ -314,6 +362,10 @@ class OpenAIExcelAgent:
             "lookup_transport_route_batch": (
                 "is checking routes...",
                 ["🚃 経路と運賃を確認中です", "💴 金額を照合しています"],
+            ),
+            "lookup_station_candidates": (
+                "is checking station names...",
+                ["🚉 駅名候補を確認中です", "🔎 表記ゆれを照合しています"],
             ),
             "lookup_transport_route_options": (
                 "is checking routes...",

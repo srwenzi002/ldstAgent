@@ -31,6 +31,28 @@ class RouteOption:
         }
 
 
+@dataclass(frozen=True)
+class StationCandidate:
+    station_code: str
+    station_name: str
+    station_yomi: str | None
+    station_type: str
+    station_type_detail: str | None
+    prefecture_code: str | None
+    prefecture_name: str | None
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "station_code": self.station_code,
+            "station_name": self.station_name,
+            "station_yomi": self.station_yomi,
+            "station_type": self.station_type,
+            "station_type_detail": self.station_type_detail,
+            "prefecture_code": self.prefecture_code,
+            "prefecture_name": self.prefecture_name,
+        }
+
+
 class EkispertMcpClient:
     def __init__(
         self,
@@ -106,6 +128,35 @@ class EkispertMcpClient:
         body = json.loads(first_content["text"])
         return self._parse_route_options(body, top_k=top_k)
 
+    def search_station_candidates(
+        self,
+        *,
+        station_name: str,
+        top_k: int = 5,
+        prefecture_code: str | None = "13",
+        match_type: str = "partial",
+        station_type: str = "train",
+    ) -> list[StationCandidate]:
+        if not self.access_key:
+            raise EkispertError("Ekispert access key is not configured.")
+
+        params: dict[str, Any] = {
+            "key": self.access_key,
+            "name": station_name,
+            "nameMatchType": match_type,
+        }
+        if station_type:
+            params["type"] = station_type
+        if prefecture_code:
+            params["prefectureCode"] = prefecture_code
+
+        with httpx.Client(timeout=self.timeout) as client:
+            response = client.get("https://api.ekispert.jp/v1/json/station/light", params=params)
+            response.raise_for_status()
+
+        body = response.json()
+        return self._parse_station_candidates(body, top_k=top_k)
+
     @staticmethod
     def _extract_error_message(result: dict[str, Any]) -> str:
         content = result.get("content")
@@ -157,6 +208,61 @@ class EkispertMcpClient:
         if not options:
             raise EkispertError("No valid route candidates could be parsed from Ekispert response.")
         return options
+
+    @staticmethod
+    def _parse_station_candidates(body: dict[str, Any], *, top_k: int) -> list[StationCandidate]:
+        result_set = body.get("ResultSet")
+        if not isinstance(result_set, dict):
+            raise EkispertError("Ekispert station payload did not contain ResultSet.")
+
+        raw_points = result_set.get("Point")
+        if isinstance(raw_points, dict):
+            raw_points = [raw_points]
+        if not isinstance(raw_points, list) or not raw_points:
+            return []
+
+        candidates: list[StationCandidate] = []
+        for point in raw_points:
+            if not isinstance(point, dict):
+                continue
+            station = point.get("Station")
+            if not isinstance(station, dict):
+                continue
+            station_code = str(station.get("code") or "").strip()
+            station_name = str(station.get("Name") or "").strip()
+            if not station_code or not station_name:
+                continue
+
+            station_type_value = station.get("Type")
+            if isinstance(station_type_value, dict):
+                station_type = str(station_type_value.get("text") or "").strip()
+                station_type_detail = str(station_type_value.get("detail") or "").strip() or None
+            else:
+                station_type = str(station_type_value or "").strip()
+                station_type_detail = None
+
+            prefecture = point.get("Prefecture")
+            prefecture_code = None
+            prefecture_name = None
+            if isinstance(prefecture, dict):
+                prefecture_code = str(prefecture.get("code") or "").strip() or None
+                prefecture_name = str(prefecture.get("Name") or "").strip() or None
+
+            candidates.append(
+                StationCandidate(
+                    station_code=station_code,
+                    station_name=station_name,
+                    station_yomi=str(station.get("Yomi") or "").strip() or None,
+                    station_type=station_type,
+                    station_type_detail=station_type_detail,
+                    prefecture_code=prefecture_code,
+                    prefecture_name=prefecture_name,
+                )
+            )
+            if len(candidates) >= top_k:
+                break
+
+        return candidates
 
     @staticmethod
     def _extract_route_line(course: dict[str, Any]) -> str:

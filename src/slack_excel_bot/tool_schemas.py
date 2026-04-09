@@ -6,6 +6,51 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
+ProjectCodeName = Literal[
+    "SD0001：SD部門経費",
+    "PF0001：PF部門経費",
+    "CSE001：CSE部門経費",
+    "KH0001：開発本部部門経費",
+    "BL0010：先端技術開発室",
+    "BL0021：第一開発部",
+    "BL0022：第二開発部",
+    "BL0023：第三開発部",
+    "BL0030：情報システム部",
+    "SB0011：IoT(龍海)",
+    "SB0012：IoT(張慈勇)",
+    "SB0021：ダンプネット企画ph",
+    "SB0022：ダンプネット開発",
+    "SB0030：プラメBiz開発",
+    "SB0041：データプラットフォーム開発",
+    "SB0042：データプラットフォーム開発(南京)",
+    "SB0050：どこかなGPSサーバ開発",
+    "SB0061：API-Suite維持",
+    "SB0062：API-SuiteマルチPF追加",
+    "SB0071：アシストスマホ",
+    "SB0072：アシストスマホ追加(下期)",
+    "SB0081：EricssonGUI保守",
+    "SB0082：EricssonGUI_Repla",
+    "SB0083：Consolidator",
+    "SB0084：EricssonGUIオンプレ",
+    "SB0090：Apigee GKEバージョンアップ",
+    "NC0010：NTTCom（アプリ保守）",
+    "NC0020：NTTCom（開発)",
+    "CW0010：NTTコムウェア",
+    "DC0001：NTTドコモ(未記入)",
+    "KD0010：KDDI（加治佐）",
+    "KD0020：KDDI（裏隠居)",
+    "OY0010：応用",
+    "JM0010：JEMS",
+    "SS0001：東京堂",
+    "SS0002：中央物産",
+    "SS0003：デジマース",
+    "SS0004：BL_反社チェックAPI",
+    "SS0005：インフォート",
+    "KN0001：管理部所管経費",
+    "AO0001：青戸寮関連",
+]
+
+
 class EmployeeInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -120,6 +165,25 @@ class TransportRouteLookupInput(BaseModel):
     route_from: str = Field(description="出发站名。")
     route_to: str = Field(description="到达站名。")
     top_k: int | None = Field(default=3, ge=1, le=5, description="返回候选路线数量，默认 3。")
+
+
+class StationCandidateLookupInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    station_name: str = Field(description="需要查找候选的模糊站名、缩略站名或疑似 OCR 结果。")
+    top_k: int | None = Field(default=5, ge=1, le=10, description="最多返回多少个候选站名，默认 5。")
+    prefecture_code: str | None = Field(
+        default="13",
+        description="优先搜索的都道府县代码。默认 13（東京都）。不确定时可留空。",
+    )
+    match_type: Literal["forward", "partial"] | None = Field(
+        default="partial",
+        description="站名匹配方式。默认 partial。",
+    )
+    station_type: Literal["train", "bus", "ship", "plane"] | None = Field(
+        default="train",
+        description="交通种别。站名归一场景默认 train。",
+    )
 
 
 class TransportRouteBatchLookupItemInput(BaseModel):
@@ -274,11 +338,13 @@ class PersonalExpenseItemInput(BaseModel):
         "その他",
     ] = Field(
         description=(
-            "精算科目。必须使用模板中的精确值。"
-            "可选值包括 交際費, 会議費, 旅費交通費, 通信費, 消耗品費, 図書費, "
+            "精算科目。テンプレートの正確な値だけを使ってください。"
+            "候補は 交際費, 会議費, 旅費交通費, 通信費, 消耗品費, 図書費, "
             "福利厚生費＿レクレーション補助, 福利厚生費＿社内福利厚生行事, 福利厚生費＿健康診断, "
             "福利厚生費, 他支払手数料, 印紙税, 他租税公課, 水道光熱費, 荷造運賃, 諸会費, 保険料, "
-            "立替金＿LDNS, 立替金, その他。"
+            "立替金＿LDNS, 立替金, その他 です。"
+            "ユーザーが明示しておらず、文脈からも確定できない場合は推測しないでください。"
+            "その場合は、候補の全一覧を日本語でそのままユーザーに提示し、選んでもらってください。"
         )
     )
     amount_jpy: float = Field(description="税込金額。単位は円。")
@@ -294,17 +360,18 @@ class PersonalExpenseItemInput(BaseModel):
         "カスタマサポートエンジニアリング部",
     ] = Field(
         description=(
-            "負担部署。必须使用模板中的精确值。"
-            "可选值: 取締役会, 営業部, 管理部, 開発本部, ソリューション開発部, "
-            "プラットフォーム開発部, カスタマサポートエンジニアリング部。"
+            "負担部署。テンプレートの正確な値だけを使ってください。"
+            "候補は 取締役会, 営業部, 管理部, 開発本部, ソリューション開発部, "
+            "プラットフォーム開発部, カスタマサポートエンジニアリング部 です。"
+            "ユーザーが明示しておらず、文脈からも確定できない場合は推測しないでください。"
+            "その場合は、候補の全一覧を日本語でそのままユーザーに提示し、選んでもらってください。"
         )
     )
-    project_code_name: str = Field(
+    project_code_name: ProjectCodeName = Field(
         description=(
-            "案件コード名称。必须填写模板中的精确值，例如 "
-            "SD0001：SD部門経費, PF0001：PF部門経費, CSE001：CSE部門経費, "
-            "KH0001：開発本部部門経費, BL0010：先端技術開発室, BL0021：第一開発部。"
-            "如果用户没有明确给出且无法从上下文确定，应先追问，不要猜测。"
+            "案件コード名称。テンプレートの正確な値だけを使ってください。"
+            "ユーザーが明示しておらず、文脈からも確定できない場合は推測しないでください。"
+            "その場合は、候補の全一覧を日本語でそのままユーザーに提示し、選んでもらってください。"
         )
     )
     counterparty_company: str = Field(description="会食或交际对象的公司名。没有公司名时也要填可识别的对象名称。")

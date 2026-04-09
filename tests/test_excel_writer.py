@@ -838,3 +838,192 @@ def test_transport_route_batch_lookup_merges_inverse_same_day_items_as_round_tri
     assert result["resolved_items"][0]["is_round_trip"] is True
     assert len(result["round_trip_suggestions"]) == 1
     assert result["round_trip_suggestions"][0]["merged_item_ids"] == ["1", "2"]
+
+
+def test_station_candidate_lookup_uses_tokyo_prefix_variants(tmp_path: Path) -> None:
+    settings = build_settings(tmp_path)
+    service = ExcelToolService(settings)
+
+    class StubClient:
+        def __init__(self) -> None:
+            self.queries: list[str] = []
+
+        def search_station_candidates(
+            self,
+            *,
+            station_name: str,
+            top_k: int,
+            prefecture_code: str | None,
+            match_type: str,
+            station_type: str,
+        ):
+            self.queries.append(station_name)
+            if station_name == "新橋":
+                return [
+                    type(
+                        "StubCandidate",
+                        (),
+                        {
+                            "station_code": "22828",
+                            "station_name": "新橋",
+                            "station_yomi": "しんばし",
+                            "station_type": "train",
+                            "station_type_detail": None,
+                            "prefecture_code": "13",
+                            "prefecture_name": "東京都",
+                            "as_dict": lambda self: {
+                                "station_code": "22828",
+                                "station_name": "新橋",
+                                "station_yomi": "しんばし",
+                                "station_type": "train",
+                                "station_type_detail": None,
+                                "prefecture_code": "13",
+                                "prefecture_name": "東京都",
+                            },
+                        },
+                    )()
+                ]
+            return []
+
+    stub_client = StubClient()
+    service.ekispert_client = stub_client
+
+    result = service.lookup_station_candidates({"station_name": "地 新橋"})
+
+    assert result["ok"] is True
+    assert result["prefix_hint"] == "地"
+    assert result["query_variants"] == ["地新橋", "新橋"]
+    assert result["auto_selected_station_name"] == "新橋"
+    assert stub_client.queries == ["地新橋", "新橋"]
+
+
+def test_station_candidate_lookup_uses_alias_query_for_tokyo_private_rail_prefix(tmp_path: Path) -> None:
+    settings = build_settings(tmp_path)
+    service = ExcelToolService(settings)
+
+    class StubClient:
+        def __init__(self) -> None:
+            self.queries: list[str] = []
+
+        def search_station_candidates(
+            self,
+            *,
+            station_name: str,
+            top_k: int,
+            prefecture_code: str | None,
+            match_type: str,
+            station_type: str,
+        ):
+            self.queries.append(station_name)
+            if station_name == "金沢八景":
+                return [
+                    type(
+                        "StubCandidate",
+                        (),
+                        {
+                            "station_code": "99999",
+                            "station_name": "金沢八景",
+                            "station_yomi": "かなざわはっけい",
+                            "station_type": "train",
+                            "station_type_detail": None,
+                            "prefecture_code": "13",
+                            "prefecture_name": "東京都",
+                            "as_dict": lambda self: {
+                                "station_code": "99999",
+                                "station_name": "金沢八景",
+                                "station_yomi": "かなざわはっけい",
+                                "station_type": "train",
+                                "station_type_detail": None,
+                                "prefecture_code": "13",
+                                "prefecture_name": "東京都",
+                            },
+                        },
+                    )()
+                ]
+            return []
+
+    stub_client = StubClient()
+    service.ekispert_client = stub_client
+
+    result = service.lookup_station_candidates({"station_name": "京急八景"})
+
+    assert result["ok"] is True
+    assert result["prefix_hint"] == "京急"
+    assert result["query_variants"] == ["京急八景", "八景", "金沢八景", "金沢八景京急線"]
+    assert result["auto_selected_station_name"] == "金沢八景"
+
+
+def test_transport_route_lookup_retries_with_resolved_station_name(tmp_path: Path) -> None:
+    settings = build_settings(tmp_path)
+    service = ExcelToolService(settings)
+
+    class StubClient:
+        def __init__(self) -> None:
+            self.route_calls: list[tuple[str, str]] = []
+            self.station_queries: list[str] = []
+
+        def search_route_options(self, *, route_from: str, route_to: str, top_k: int, travel_date: str | None):
+            self.route_calls.append((route_from, route_to))
+            if route_from == "京急八景":
+                raise EkispertError('{\n  "status": 400,\n  "message": "駅名が見つかりません。(京急八景)"\n}')
+            return [
+                type(
+                    "StubOption",
+                    (),
+                    {
+                        "as_dict": lambda self: {
+                            "option_id": "1",
+                            "route_summary": "金沢八景 -> 青物横丁",
+                            "route_line": "金沢八景 -> 京急本線 -> 青物横丁",
+                            "one_way_amount": 510,
+                            "total_minutes": 18,
+                            "transfer_count": 0,
+                        }
+                    },
+                )()
+            ]
+
+        def search_station_candidates(
+            self,
+            *,
+            station_name: str,
+            top_k: int,
+            prefecture_code: str | None,
+            match_type: str,
+            station_type: str,
+        ):
+            self.station_queries.append(station_name)
+            if station_name == "金沢八景":
+                return [
+                    type(
+                        "StubCandidate",
+                        (),
+                        {
+                            "station_code": "99999",
+                            "station_name": "金沢八景",
+                            "station_yomi": "かなざわはっけい",
+                            "station_type": "train",
+                            "station_type_detail": None,
+                            "prefecture_code": "13",
+                            "prefecture_name": "東京都",
+                        },
+                    )()
+                ]
+            return []
+
+    stub_client = StubClient()
+    service.ekispert_client = stub_client
+
+    result = service.lookup_transport_route_options(
+        {
+            "travel_date": "2026-03-21",
+            "route_from": "京急八景",
+            "route_to": "青物横丁",
+            "top_k": 3,
+        }
+    )
+
+    assert result["ok"] is True
+    assert result["station_normalizations"][0]["original"] == "京急八景"
+    assert result["station_normalizations"][0]["resolved"] == "金沢八景"
+    assert stub_client.route_calls == [("京急八景", "青物横丁"), ("金沢八景", "青物横丁")]

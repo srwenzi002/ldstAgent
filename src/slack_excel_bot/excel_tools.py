@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import calendar
+import re
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -18,6 +19,7 @@ from slack_excel_bot.tool_schemas import (
     ExpenseEvidenceAnalysisInput,
     EmployeeInput,
     PersonalExpenseSheetInput,
+    StationCandidateLookupInput,
     TransportRouteBatchLookupInput,
     TransportRouteLookupInput,
     TransportSheetInput,
@@ -42,6 +44,26 @@ class GeneratedWorkbook:
 
 class ExcelToolService:
     FARE_TOLERANCE_JPY = 10.0
+    TOKYO_STATION_PREFIX_RULES = {
+        "京成": {"operator_keywords": ("京成",), "strip_prefix_for_query": True},
+        "京急": {"operator_keywords": ("京急",), "strip_prefix_for_query": True},
+        "JR": {"operator_keywords": ("JR", "ＪＲ"), "strip_prefix_for_query": True},
+        "地": {"operator_keywords": ("東京メトロ", "都営"), "strip_prefix_for_query": True},
+        "都": {"operator_keywords": ("都営",), "strip_prefix_for_query": True},
+        "メトロ": {"operator_keywords": ("東京メトロ",), "strip_prefix_for_query": True},
+        "東武": {"operator_keywords": ("東武",), "strip_prefix_for_query": True},
+        "西武": {"operator_keywords": ("西武",), "strip_prefix_for_query": True},
+        "京王": {"operator_keywords": ("京王",), "strip_prefix_for_query": True},
+        "東急": {"operator_keywords": ("東急",), "strip_prefix_for_query": True},
+        "小田急": {"operator_keywords": ("小田急",), "strip_prefix_for_query": True},
+        "相鉄": {"operator_keywords": ("相鉄",), "strip_prefix_for_query": True},
+    }
+    TOKYO_STATION_ALIAS_QUERIES = {
+        "京急八景": ("金沢八景", "金沢八景(京急線)"),
+        "京成日暮": ("日暮里",),
+        "京成日暮里": ("日暮里",),
+        "京成上野": ("京成上野",),
+    }
     WORK_GRADE_SCHEDULES = {
         1: {"clock_in": "09:30", "clock_out": "18:00", "half_day_cutoff": "12:30"},
         2: {"clock_in": "09:00", "clock_out": "17:30", "half_day_cutoff": "12:00"},
@@ -125,19 +147,72 @@ class ExcelToolService:
         if self.ekispert_client is None:
             raise EkispertError("EXPENSES_EKISPERT_API_TOKEN is not configured.")
 
-        options = self.ekispert_client.search_route_options(
-            route_from=args.route_from,
-            route_to=args.route_to,
-            top_k=args.top_k or 3,
-            travel_date=args.travel_date,
-        )
-        return {
+        try:
+            options, normalization_info = self._search_route_options_with_station_resolution(
+                route_from=args.route_from,
+                route_to=args.route_to,
+                top_k=args.top_k or 3,
+                travel_date=args.travel_date,
+            )
+        except EkispertError as exc:
+            return {
+                "ok": False,
+                "title": "交通経路候補",
+                "travel_date": args.travel_date,
+                "route_from": args.route_from,
+                "route_to": args.route_to,
+                "status": "query_error",
+                "match_type": "query_error",
+                "should_prompt_user": True,
+                "prompt_reason": "query_error",
+                "options": [],
+                "error": str(exc),
+            }
+        response = {
             "ok": True,
             "title": "交通経路候補",
             "travel_date": args.travel_date,
             "route_from": args.route_from,
             "route_to": args.route_to,
             "options": [option.as_dict() for option in options],
+        }
+        if normalization_info:
+            response["station_normalizations"] = normalization_info
+        return response
+
+    def lookup_station_candidates(self, raw_args: dict[str, Any]) -> dict[str, Any]:
+        args = StationCandidateLookupInput.model_validate(raw_args)
+        if self.ekispert_client is None:
+            raise EkispertError("EXPENSES_EKISPERT_API_TOKEN is not configured.")
+
+        try:
+            normalized = self._lookup_station_candidates_with_variants(
+                station_name=args.station_name,
+                top_k=args.top_k or 5,
+                prefecture_code=args.prefecture_code,
+                match_type=args.match_type or "partial",
+                station_type=args.station_type or "train",
+            )
+        except EkispertError as exc:
+            return {
+                "ok": False,
+                "title": "駅名候補",
+                "station_name": args.station_name,
+                "candidates": [],
+                "error": str(exc),
+            }
+
+        return {
+            "ok": True,
+            "title": "駅名候補",
+            "station_name": args.station_name,
+            "prefix_hint": normalized["prefix_hint"],
+            "query_variants": normalized["query_variants"],
+            "auto_selected_station_name": normalized["resolved_station_name"],
+            "prefecture_code": args.prefecture_code,
+            "match_type": args.match_type or "partial",
+            "station_type": args.station_type or "train",
+            "candidates": [candidate.as_dict() for candidate in normalized["candidates"]],
         }
 
     def lookup_transport_route_batch(self, raw_args: dict[str, Any]) -> dict[str, Any]:
@@ -159,7 +234,7 @@ class ExcelToolService:
                 "image_route_line": item.route_line,
             }
             try:
-                options = self.ekispert_client.search_route_options(
+                options, normalization_info = self._search_route_options_with_station_resolution(
                     route_from=item.route_from,
                     route_to=item.route_to,
                     top_k=args.top_k or 3,
@@ -177,6 +252,8 @@ class ExcelToolService:
                     "options": option_dicts,
                     "error": None,
                 }
+                if normalization_info:
+                    result_item["station_normalizations"] = normalization_info
                 results.append(result_item)
                 if result_item["matched_option"] is not None and not result_item["should_prompt_user"]:
                     resolved_candidates.append(
@@ -223,6 +300,238 @@ class ExcelToolService:
             "needs_confirmation": needs_confirmation,
             "items": results,
         }
+
+    def _search_route_options_with_station_resolution(
+        self,
+        *,
+        route_from: str,
+        route_to: str,
+        top_k: int,
+        travel_date: str | None,
+    ) -> tuple[list[Any], list[dict[str, Any]]]:
+        assert self.ekispert_client is not None
+        original_error: EkispertError | None = None
+        try:
+            return (
+                self.ekispert_client.search_route_options(
+                    route_from=route_from,
+                    route_to=route_to,
+                    top_k=top_k,
+                    travel_date=travel_date,
+                ),
+                [],
+            )
+        except EkispertError as exc:
+            original_error = exc
+            if "駅名が見つかりません" not in str(exc):
+                raise
+
+        normalization_info: list[dict[str, Any]] = []
+        resolved_from = self._resolve_station_name(route_from)
+        resolved_to = self._resolve_station_name(route_to)
+
+        if resolved_from["resolved_station_name"] and resolved_from["resolved_station_name"] != route_from:
+            normalization_info.append(
+                {
+                    "field": "route_from",
+                    "original": route_from,
+                    "resolved": resolved_from["resolved_station_name"],
+                    "prefix_hint": resolved_from["prefix_hint"],
+                    "query_variants": resolved_from["query_variants"],
+                }
+            )
+        if resolved_to["resolved_station_name"] and resolved_to["resolved_station_name"] != route_to:
+            normalization_info.append(
+                {
+                    "field": "route_to",
+                    "original": route_to,
+                    "resolved": resolved_to["resolved_station_name"],
+                    "prefix_hint": resolved_to["prefix_hint"],
+                    "query_variants": resolved_to["query_variants"],
+                }
+            )
+
+        retry_from = resolved_from["resolved_station_name"] or route_from
+        retry_to = resolved_to["resolved_station_name"] or route_to
+        if retry_from == route_from and retry_to == route_to:
+            raise original_error
+
+        return (
+            self.ekispert_client.search_route_options(
+                route_from=retry_from,
+                route_to=retry_to,
+                top_k=top_k,
+                travel_date=travel_date,
+            ),
+            normalization_info,
+        )
+
+    def _resolve_station_name(self, station_name: str) -> dict[str, Any]:
+        normalized = self._lookup_station_candidates_with_variants(
+            station_name=station_name,
+            top_k=5,
+            prefecture_code="13",
+            match_type="partial",
+            station_type="train",
+        )
+        return {
+            "prefix_hint": normalized["prefix_hint"],
+            "query_variants": normalized["query_variants"],
+            "resolved_station_name": normalized["resolved_station_name"],
+        }
+
+    def _lookup_station_candidates_with_variants(
+        self,
+        *,
+        station_name: str,
+        top_k: int,
+        prefecture_code: str | None,
+        match_type: str,
+        station_type: str,
+    ) -> dict[str, Any]:
+        assert self.ekispert_client is not None
+        query_plan = self._build_station_query_plan(station_name)
+        candidate_scores: dict[str, tuple[float, Any]] = {}
+        search_station_candidates = getattr(self.ekispert_client, "search_station_candidates", None)
+        if search_station_candidates is None:
+            return {
+                "prefix_hint": query_plan["prefix_hint"],
+                "query_variants": query_plan["query_variants"],
+                "resolved_station_name": None,
+                "candidates": [],
+            }
+
+        for query in query_plan["query_variants"]:
+            if not query:
+                continue
+            candidates = search_station_candidates(
+                station_name=query,
+                top_k=top_k,
+                prefecture_code=prefecture_code,
+                match_type=match_type,
+                station_type=station_type,
+            )
+            for rank, candidate in enumerate(candidates):
+                score = self._score_station_candidate(
+                    raw_station_name=station_name,
+                    query=query,
+                    candidate=candidate,
+                    prefix_hint=query_plan["prefix_hint"],
+                    rank=rank,
+                )
+                current = candidate_scores.get(candidate.station_code)
+                if current is None or score > current[0]:
+                    candidate_scores[candidate.station_code] = (score, candidate)
+
+        ordered_candidates = [
+            item[1]
+            for item in sorted(
+                candidate_scores.values(),
+                key=lambda item: (
+                    -item[0],
+                    item[1].station_name,
+                ),
+            )[:top_k]
+        ]
+
+        return {
+            "prefix_hint": query_plan["prefix_hint"],
+            "query_variants": query_plan["query_variants"],
+            "resolved_station_name": self._select_resolved_station_name(
+                raw_station_name=station_name,
+                query_variants=query_plan["query_variants"],
+                candidates=ordered_candidates,
+            ),
+            "candidates": ordered_candidates,
+        }
+
+    @classmethod
+    def _build_station_query_plan(cls, station_name: str) -> dict[str, Any]:
+        raw_name = cls._compact_station_name(station_name)
+        prefix_hint = None
+        query_variants: list[str] = []
+        for prefix in sorted(cls.TOKYO_STATION_PREFIX_RULES, key=len, reverse=True):
+            if raw_name.startswith(prefix):
+                prefix_hint = prefix
+                break
+
+        def add_query(value: str | None) -> None:
+            compacted = cls._compact_station_name(value)
+            if compacted and compacted not in query_variants:
+                query_variants.append(compacted)
+
+        add_query(raw_name)
+
+        if prefix_hint is not None:
+            stripped = raw_name.removeprefix(prefix_hint)
+            add_query(stripped)
+            for alias in cls.TOKYO_STATION_ALIAS_QUERIES.get(raw_name, ()):
+                add_query(alias)
+
+        return {
+            "prefix_hint": prefix_hint,
+            "query_variants": query_variants,
+        }
+
+    @classmethod
+    def _score_station_candidate(
+        cls,
+        *,
+        raw_station_name: str,
+        query: str,
+        candidate: Any,
+        prefix_hint: str | None,
+        rank: int,
+    ) -> float:
+        raw = cls._compact_station_name(raw_station_name)
+        query_compact = cls._compact_station_name(query)
+        candidate_name = cls._compact_station_name(candidate.station_name)
+        score = 0.0
+        if candidate_name == raw:
+            score += 120
+        if candidate_name == query_compact:
+            score += 90
+        if query_compact and query_compact in candidate_name:
+            score += 40
+        if raw and raw in candidate_name:
+            score += 20
+        if prefix_hint is not None:
+            rule = cls.TOKYO_STATION_PREFIX_RULES[prefix_hint]
+            if any(keyword in candidate.station_name for keyword in rule["operator_keywords"]):
+                score += 30
+        if candidate.prefecture_code == "13":
+            score += 10
+        score -= rank
+        return score
+
+    @classmethod
+    def _select_resolved_station_name(
+        cls,
+        *,
+        raw_station_name: str,
+        query_variants: list[str],
+        candidates: list[Any],
+    ) -> str | None:
+        if not candidates:
+            return None
+
+        query_set = {cls._compact_station_name(query) for query in query_variants}
+        for candidate in candidates:
+            candidate_name = cls._compact_station_name(candidate.station_name)
+            if candidate_name in query_set and candidate_name != cls._compact_station_name(raw_station_name):
+                return candidate.station_name
+
+        if len(candidates) == 1:
+            return candidates[0].station_name
+        return None
+
+    @staticmethod
+    def _compact_station_name(value: str | None) -> str:
+        if value is None:
+            return ""
+        compacted = str(value).replace("\u3000", "").replace(" ", "").strip()
+        compacted = re.sub(r"[()（）]", "", compacted)
+        return compacted
 
     def analyze_expense_evidence(self, raw_args: dict[str, Any]) -> dict[str, Any]:
         args = ExpenseEvidenceAnalysisInput.model_validate(raw_args)
