@@ -107,7 +107,7 @@ def test_handle_socket_event_publishes_home_view(tmp_path: Path) -> None:
         assert "技術スタック" in page_text
         assert "実装済み機能" in page_text
         assert "精算くん" in page_text
-        assert "v0.3.2" in page_text
+        assert "v0.4.0" in page_text
         assert "v0.3.0" in page_text
 
     asyncio.run(scenario())
@@ -195,3 +195,47 @@ def test_agent_status_mapping_for_attendance_generation(tmp_path: Path) -> None:
 
     assert status == "is generating Excel..."
     assert messages == ["📅 勤務データを整理中です", "📎 Excel を仕上げています"]
+
+
+def test_auto_generate_ready_transport_draft_uses_full_state(tmp_path: Path) -> None:
+    bot = build_bot(tmp_path)
+    token = bot.agent.tool_service.start_draft_run("thread-1", bot.thread_store)
+    try:
+        bot.agent.tool_service.upsert_transport_draft(
+            {
+                "mode": "merge",
+                "employee": {
+                    "department": "開発本部",
+                    "department_code": "50",
+                    "employee_id": "0001",
+                    "name": "山田太郎",
+                },
+                "items": [
+                    {
+                        "travel_date": "2026-03-10",
+                        "purpose": "営業活動",
+                        "transport_mode": "電車・バス",
+                        "route_from": "新宿",
+                        "route_to": "渋谷",
+                        "route_line": "JR山手線",
+                        "one_way_amount": 178,
+                        "is_round_trip": False,
+                    }
+                ],
+                "pending_questions": [],
+            }
+        )
+    finally:
+        run_state = bot.agent.tool_service.finish_draft_run(token)
+
+    assert run_state is not None
+    generated = bot._auto_generate_ready_drafts(
+        thread_ts="thread-1",
+        already_generated_files=[],
+        updated_templates=run_state.updated_templates,
+    )
+
+    assert len(generated) == 1
+    assert generated[0]["template_id"] == "transport_jp_leadingsoft_v1"
+    draft = bot.thread_store.get_draft("thread-1", "transport")
+    assert draft["latest_generated_file"]["title"] == generated[0]["title"]

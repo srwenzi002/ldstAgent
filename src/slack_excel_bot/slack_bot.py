@@ -12,6 +12,7 @@ from slack_sdk.web.async_client import AsyncWebClient
 
 from slack_excel_bot.debug_trace import DebugTrace
 from slack_excel_bot.openai_agent import OpenAIExcelAgent
+from slack_excel_bot.thread_draft_store import ThreadDraftStore
 
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,7 @@ class SlackExcelBot:
         self._request_semaphore = asyncio.Semaphore(max_concurrent_requests)
         self._thread_locks: dict[str, asyncio.Lock] = {}
         self._background_tasks: set[asyncio.Task[Any]] = set()
+        self.thread_store = ThreadDraftStore(agent.settings.storage_dir)
 
     async def handle_socket_event(self, payload: dict[str, Any], event: dict[str, Any]) -> None:
         event_type = event.get("type")
@@ -109,7 +111,10 @@ class SlackExcelBot:
             await self._safe_set_status(channel, thread_ts, "is thinking...", ["🌷 ご依頼を確認中です"])
             conversation_input = await self._build_openai_input(event=event, trace=trace)
             trace.write_section("conversation_input", conversation_input)
+            draft_context_summary = self.thread_store.build_context_summary(thread_ts)
+            trace.write_section("draft_context_summary", draft_context_summary)
             loop = asyncio.get_running_loop()
+            draft_token = self.agent.tool_service.start_draft_run(thread_ts, self.thread_store)
 
             def status_callback(status: str, loading_messages: list[str] | None) -> None:
                 asyncio.run_coroutine_threadsafe(
@@ -117,7 +122,32 @@ class SlackExcelBot:
                     loop,
                 )
 
-            result = await asyncio.to_thread(self.agent.run, conversation_input, trace, status_callback)
+            try:
+                result = await asyncio.to_thread(
+                    self.agent.run,
+                    conversation_input,
+                    trace,
+                    status_callback,
+                    draft_context_summary,
+                )
+            finally:
+                draft_run_state = self.agent.tool_service.finish_draft_run(draft_token)
+
+            replacement_messages = draft_run_state.replacement_messages if draft_run_state else []
+            result.generated_files = self._sync_generated_files_to_store(thread_ts, result.generated_files)
+            auto_generated = self._auto_generate_ready_drafts(
+                thread_ts=thread_ts,
+                already_generated_files=result.generated_files,
+                updated_templates=draft_run_state.updated_templates if draft_run_state else set(),
+            )
+            if auto_generated:
+                result.generated_files.extend(auto_generated)
+                if "Slack にファイル" not in result.text and "文件" not in result.text:
+                    result.text = (
+                        result.text.rstrip() + "\n\n最新版の Excel も作成して、このスレッドにアップロードしました。"
+                    ).strip()
+            if replacement_messages:
+                result.text = "\n".join(replacement_messages + [result.text]).strip()
             trace.write_section("agent_result", {"text": result.text, "generated_files": result.generated_files})
 
             for item in result.generated_files:
@@ -152,6 +182,71 @@ class SlackExcelBot:
                 )
             logger.exception("Failed to handle Slack event")
             raise
+
+    def _sync_generated_files_to_store(self, thread_ts: str, generated_files: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        synced: list[dict[str, Any]] = []
+        for item in generated_files:
+            template_type = self._template_type_from_generated_file(item)
+            if template_type is not None:
+                self.thread_store.record_file_generated(
+                    thread_ts=thread_ts,
+                    template_type=template_type,
+                    generated_file=item,
+                    canonical_state=item.get("payload"),
+                )
+            synced.append(item)
+        return synced
+
+    def _auto_generate_ready_drafts(
+        self,
+        *,
+        thread_ts: str,
+        already_generated_files: list[dict[str, Any]],
+        updated_templates: set[str],
+    ) -> list[dict[str, Any]]:
+        already_generated_templates = {
+            template_type
+            for template_type in (
+                self._template_type_from_generated_file(item) for item in already_generated_files
+            )
+            if template_type is not None
+        }
+        generated_files: list[dict[str, Any]] = []
+        for template_type in updated_templates:
+            if template_type in already_generated_templates:
+                continue
+            draft = self.thread_store.get_draft(thread_ts, template_type)  # type: ignore[arg-type]
+            canonical_state = draft.get("canonical_state") or {}
+            if not self.agent.tool_service.is_template_ready(template_type, canonical_state):
+                continue
+            if draft.get("pending_questions"):
+                continue
+            if template_type == "transport":
+                generated = self.agent.tool_service.generate_transport_sheet(canonical_state)
+            elif template_type == "personal_expense":
+                generated = self.agent.tool_service.generate_personal_expense_sheet(canonical_state)
+            elif template_type == "attendance":
+                generated = self.agent.tool_service.generate_attendance_sheet(canonical_state)
+            else:
+                continue
+            self.thread_store.record_file_generated(
+                thread_ts=thread_ts,
+                template_type=template_type,  # type: ignore[arg-type]
+                generated_file=generated,
+                canonical_state=canonical_state,
+            )
+            generated_files.append(generated)
+        return generated_files
+
+    @staticmethod
+    def _template_type_from_generated_file(item: dict[str, Any]) -> str | None:
+        template_id = item.get("template_id")
+        template_map = {
+            "transport_jp_leadingsoft_v1": "transport",
+            "personal_expense_jp_leadingsoft_v1": "personal_expense",
+            "timesheet_jp_leadingsoft_v1": "attendance",
+        }
+        return template_map.get(template_id)
 
     def _get_thread_lock(self, thread_ts: str) -> asyncio.Lock:
         lock = self._thread_locks.get(thread_ts)
@@ -325,18 +420,14 @@ class SlackExcelBot:
                         "type": "mrkdwn",
                         "text": (
                             "*:new: 更新履歴*\n"
-                            "*v0.3.2* (2026-04-07)\n"
-                            "• アプリの表示名を「精算くん」に統一し、旧名称のユーザー向け表示を整理\n"
-                            "• Slack Home の更新履歴を新しい順に並べ替え、表示順を見直し\n"
-                            "• バージョン見出しの書式を調整し、Slack 上で読みやすい表示に改善\n\n"
-                            "*v0.3.1* (2026-04-05)\n"
-                            "• 勤怠表生成で月カレンダーと日本祝日を参照し、平日・土日・祝日の判定を安定化\n"
-                            "• 半休時の就業# と出退勤時刻をテンプレート規則に合わせて自動補正\n"
-                            "• 画像由来の交通費明細と経路照会まわりの補完ルールを見直し、入力の精度を改善\n\n"
+                            "*v0.4.0* (2026-04-09)\n"
+                            "• 交通費・個人立替・勤怠で、スレッドごとの最新版草稿を保持し、追記・修正後に完全版を再生成する方式へ改善\n"
+                            "• 交通系IC履歴の駅名補正を強化し、東京都系の表記ゆれや候補照会から経路再確認しやすく改善\n"
+                            "• Slack 上のやり取りだけで、確認待ち・草稿更新・再出力まで続けやすい運用に整理\n\n"
                             "*v0.3.0* (2026-04-01)\n"
                             "• Slack Home を追加し、利用案内・技術スタック・更新履歴をアプリ内で確認可能に\n"
                             "• Docker ベースの本番運用へ移行し、Git tag 起点の自動デプロイを整備\n"
-                            "• 旧 expenses-agent を置き換え、新しい精算くんへ本番切り替え\n\n"
+                            "• 勤怠カレンダー参照、交通費補完、表示文言の見直しなど v3 系の改善を反映\n\n"
                             "*v0.2.0* (2026-03-05)\n"
                             "• Slack/API 同時処理を強化し、50人同時利用を想定した並行処理チューニングを追加\n"
                             "• Slack セッション保存を SQLite 化し、並行アクセス時の安定性を改善\n"

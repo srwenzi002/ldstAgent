@@ -392,6 +392,68 @@ class PersonalExpenseSheetInput(BaseModel):
     )
 
 
+class TransportDraftUpsertInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["replace", "merge"] = Field(
+        default="merge",
+        description="同テンプレート草稿の扱い。新しい交通費草稿として扱うなら replace、既存更新なら merge。",
+    )
+    employee: EmployeeInput | None = None
+    items: list[TransportItemInput] = Field(default_factory=list, description="現在の交通費草稿として保持したい明細一覧。")
+    pending_questions: list[str] = Field(
+        default_factory=list,
+        description="まだ確認が必要な項目の一覧。未解決がなければ空配列。",
+    )
+
+
+class PersonalExpenseDraftItemPatchInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expense_date: str | None = None
+    purpose: PersonalExpenseItemInput.model_fields["purpose"].annotation = Field(default=None)
+    amount_jpy: float | None = None
+    payee_name: str | None = None
+    description: str | None = None
+    burden_department: PersonalExpenseItemInput.model_fields["burden_department"].annotation = Field(default=None)
+    project_code_name: ProjectCodeName | None = None
+    counterparty_company: str | None = None
+    counterparty_attendees: str | None = None
+    counterparty_count: int | None = Field(default=None, ge=0)
+    internal_attendees: str | None = None
+    internal_count: int | None = Field(default=None, ge=0)
+
+
+class PersonalExpenseDraftUpsertInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["replace", "merge"] = Field(
+        default="merge",
+        description="同テンプレート草稿の扱い。新しい個人立替草稿として扱うなら replace、既存更新なら merge。",
+    )
+    employee: EmployeeInput | None = None
+    items: list[PersonalExpenseDraftItemPatchInput] = Field(
+        default_factory=list,
+        description="現在把握している個人立替明細一覧。未確定フィールドは null 可。",
+    )
+    pending_questions: list[str] = Field(default_factory=list)
+
+
+class AttendanceDraftUpsertInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["replace", "merge"] = Field(
+        default="merge",
+        description="同テンプレート草稿の扱い。新しい勤務表草稿として扱うなら replace、既存更新なら merge。",
+    )
+    year: int | None = Field(default=None, ge=2000, le=2100)
+    month: int | None = Field(default=None, ge=1, le=12)
+    employee: EmployeeInput | None = None
+    paid_leave_balance: float | None = None
+    days: list[AttendanceDayOverride] = Field(default_factory=list)
+    pending_questions: list[str] = Field(default_factory=list)
+
+
 def _normalize_for_openai(schema: dict[str, Any]) -> dict[str, Any]:
     normalized = deepcopy(schema)
 

@@ -13,10 +13,13 @@ from slack_excel_bot.debug_trace import DebugTrace
 from slack_excel_bot.excel_tools import ExcelToolService
 from slack_excel_bot.tool_schemas import (
     AttendanceSheetInput,
+    AttendanceDraftUpsertInput,
     CalendarContextInput,
     ExpenseEvidenceAnalysisInput,
+    PersonalExpenseDraftUpsertInput,
     PersonalExpenseSheetInput,
     StationCandidateLookupInput,
+    TransportDraftUpsertInput,
     TransportRouteBatchLookupInput,
     TransportRouteLookupInput,
     TransportSheetInput,
@@ -99,6 +102,17 @@ class OpenAIExcelAgent:
                 StationCandidateLookupInput,
             ),
             openai_function_tool(
+                "upsert_transport_draft",
+                (
+                    "交通費草稿の canonical state を更新します。"
+                    "同一スレッドでは transport 草稿は 1 つだけ維持されます。"
+                    "新しい交通費草稿として作り直すなら mode=replace、既存交通費草稿の更新なら mode=merge を使ってください。"
+                    "候補確認待ちが残る場合は pending_questions に質問文を入れてください。"
+                    "既に確定した交通明細は items に完全な形で残し、未確定のものは pending_questions 側で管理してください。"
+                ),
+                TransportDraftUpsertInput,
+            ),
+            openai_function_tool(
                 "lookup_transport_route_batch",
                 (
                     "複数の交通明細について、経路候補と金額候補をまとめて照合します。"
@@ -141,6 +155,16 @@ class OpenAIExcelAgent:
                 TransportSheetInput,
             ),
             openai_function_tool(
+                "upsert_personal_expense_draft",
+                (
+                    "個人立替草稿の canonical state を更新します。"
+                    "同一スレッドでは personal_expense 草稿は 1 つだけ維持されます。"
+                    "新しい個人立替草稿に切り替えるなら mode=replace、既存更新なら mode=merge を使ってください。"
+                    "未確定項目がある場合は pending_questions に不足項目を入れてください。"
+                ),
+                PersonalExpenseDraftUpsertInput,
+            ),
+            openai_function_tool(
                 "generate_personal_expense_sheet",
                 (
                     "個人立替経費精算表を作成します。"
@@ -154,16 +178,29 @@ class OpenAIExcelAgent:
                 ),
                 PersonalExpenseSheetInput,
             ),
+            openai_function_tool(
+                "upsert_attendance_draft",
+                (
+                    "勤務表草稿の canonical state を更新します。"
+                    "同一スレッドでは attendance 草稿は 1 つだけ維持されます。"
+                    "新しい勤務表草稿に切り替えるなら mode=replace、既存更新なら mode=merge を使ってください。"
+                    "未確定項目がある場合は pending_questions に質問文を入れてください。"
+                ),
+                AttendanceDraftUpsertInput,
+            ),
         ]
         self.handlers: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
             "get_month_calendar_context": self.tool_service.get_month_calendar_context,
             "generate_attendance_sheet": self.tool_service.generate_attendance_sheet,
             "analyze_expense_evidence": self.tool_service.analyze_expense_evidence,
+            "upsert_transport_draft": self.tool_service.upsert_transport_draft,
             "lookup_station_candidates": self.tool_service.lookup_station_candidates,
             "lookup_transport_route_batch": self.tool_service.lookup_transport_route_batch,
             "lookup_transport_route_options": self.tool_service.lookup_transport_route_options,
             "generate_transport_sheet": self.tool_service.generate_transport_sheet,
+            "upsert_personal_expense_draft": self.tool_service.upsert_personal_expense_draft,
             "generate_personal_expense_sheet": self.tool_service.generate_personal_expense_sheet,
+            "upsert_attendance_draft": self.tool_service.upsert_attendance_draft,
         }
 
     def run(
@@ -171,6 +208,7 @@ class OpenAIExcelAgent:
         conversation_input: list[dict[str, Any]],
         trace: DebugTrace | None = None,
         status_callback: Callable[[str, list[str] | None], None] | None = None,
+        draft_context_summary: str | None = None,
     ) -> AgentResult:
         client = OpenAI(api_key=self.settings.openai_api_key)
         today_jst = datetime.now(ZoneInfo("Asia/Tokyo")).date()
@@ -233,6 +271,13 @@ class OpenAIExcelAgent:
             "往復統合した場合も、可能なら『京急本線 → 都営地下鉄浅草線 → 京成押上線』のように、採用した route_line を添えてください。"
             "交通費精算表の生成後、未反映・保留・確認待ちのデータがあるなら、『今回、表に入力した明細』だけで終わらせず、続けて『今回まだ表に入れていない項目』を必ず出してください。"
         )
+        if draft_context_summary:
+            instructions += (
+                "現在のスレッド草稿状態も考慮してください。"
+                "既存草稿を更新できる場合は、generate_* の前に対応する upsert_*_draft を使って canonical state を同期してください。"
+                "同じテンプレートの新しい依頼として扱うと判断した場合は mode=replace にしてください。"
+                f"\n\n{draft_context_summary}"
+            )
 
         if trace is not None:
             trace.write_section(
@@ -363,6 +408,10 @@ class OpenAIExcelAgent:
                 "is checking routes...",
                 ["🚃 経路と運賃を確認中です", "💴 金額を照合しています"],
             ),
+            "upsert_transport_draft": (
+                "is updating draft...",
+                ["🧠 交通費草稿を更新中です", "🗂️ 最新版の状態を整理しています"],
+            ),
             "lookup_station_candidates": (
                 "is checking station names...",
                 ["🚉 駅名候補を確認中です", "🔎 表記ゆれを照合しています"],
@@ -375,9 +424,17 @@ class OpenAIExcelAgent:
                 "is generating Excel...",
                 ["📝 交通費精算表を作成中です", "📎 Excel を仕上げています"],
             ),
+            "upsert_personal_expense_draft": (
+                "is updating draft...",
+                ["🧠 個人立替草稿を更新中です", "🗂️ 最新版の状態を整理しています"],
+            ),
             "generate_personal_expense_sheet": (
                 "is generating Excel...",
                 ["🧮 経費精算表を作成中です", "📎 Excel を仕上げています"],
+            ),
+            "upsert_attendance_draft": (
+                "is updating draft...",
+                ["🧠 勤務表草稿を更新中です", "🗂️ 最新版の状態を整理しています"],
             ),
             "generate_attendance_sheet": (
                 "is generating Excel...",

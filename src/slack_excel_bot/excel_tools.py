@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import calendar
+import contextvars
 import re
 from dataclasses import dataclass
 from datetime import date
@@ -12,14 +13,18 @@ import holidays
 from slack_excel_bot.config import Settings
 from slack_excel_bot.ekispert_client import EkispertError, EkispertMcpClient
 from slack_excel_bot.excel_writer import DraftWriteResult, ExcelWriter
+from slack_excel_bot.thread_draft_store import ThreadDraftStore
 from slack_excel_bot.tool_schemas import (
     AttendanceDayOverride,
+    AttendanceDraftUpsertInput,
     CalendarContextInput,
     AttendanceSheetInput,
     ExpenseEvidenceAnalysisInput,
     EmployeeInput,
+    PersonalExpenseDraftUpsertInput,
     PersonalExpenseSheetInput,
     StationCandidateLookupInput,
+    TransportDraftUpsertInput,
     TransportRouteBatchLookupInput,
     TransportRouteLookupInput,
     TransportSheetInput,
@@ -40,6 +45,14 @@ class GeneratedWorkbook:
             "title": self.title,
             "payload": self.payload,
         }
+
+
+@dataclass
+class DraftRunState:
+    thread_ts: str
+    store: ThreadDraftStore
+    updated_templates: set[str]
+    replacement_messages: list[str]
 
 
 class ExcelToolService:
@@ -78,6 +91,25 @@ class ExcelToolService:
         self.ekispert_client = (
             EkispertMcpClient(settings.ekispert_api_token) if settings.ekispert_api_token else None
         )
+        self._draft_run_state: contextvars.ContextVar[DraftRunState | None] = contextvars.ContextVar(
+            "draft_run_state",
+            default=None,
+        )
+
+    def start_draft_run(self, thread_ts: str, store: ThreadDraftStore) -> contextvars.Token[DraftRunState | None]:
+        return self._draft_run_state.set(
+            DraftRunState(
+                thread_ts=thread_ts,
+                store=store,
+                updated_templates=set(),
+                replacement_messages=[],
+            )
+        )
+
+    def finish_draft_run(self, token: contextvars.Token[DraftRunState | None]) -> DraftRunState | None:
+        state = self._draft_run_state.get()
+        self._draft_run_state.reset(token)
+        return state
 
     def generate_attendance_sheet(self, raw_args: dict[str, Any]) -> dict[str, Any]:
         args = AttendanceSheetInput.model_validate(raw_args)
@@ -141,6 +173,19 @@ class ExcelToolService:
             title=self._build_transport_title(payload),
             payload=payload,
         ).as_tool_output()
+
+    def upsert_transport_draft(self, raw_args: dict[str, Any]) -> dict[str, Any]:
+        args = TransportDraftUpsertInput.model_validate(raw_args)
+        draft_patch = {
+            "employee": self._merge_employee_defaults(args.employee),
+            "items": [self._normalize_transport_item(item) for item in args.items],
+        }
+        return self._upsert_template_draft(
+            template_type="transport",
+            mode=args.mode,
+            draft_patch=draft_patch,
+            pending_questions=args.pending_questions,
+        )
 
     def lookup_transport_route_options(self, raw_args: dict[str, Any]) -> dict[str, Any]:
         args = TransportRouteLookupInput.model_validate(raw_args)
@@ -550,6 +595,19 @@ class ExcelToolService:
             **payload,
         }
 
+    def upsert_personal_expense_draft(self, raw_args: dict[str, Any]) -> dict[str, Any]:
+        args = PersonalExpenseDraftUpsertInput.model_validate(raw_args)
+        draft_patch = {
+            "employee": self._merge_employee_defaults(args.employee) if args.employee else None,
+            "items": [item.model_dump(mode="json", exclude_none=True) for item in args.items],
+        }
+        return self._upsert_template_draft(
+            template_type="personal_expense",
+            mode=args.mode,
+            draft_patch=draft_patch,
+            pending_questions=args.pending_questions,
+        )
+
     def generate_personal_expense_sheet(self, raw_args: dict[str, Any]) -> dict[str, Any]:
         args = PersonalExpenseSheetInput.model_validate(raw_args)
         payload = {
@@ -563,6 +621,26 @@ class ExcelToolService:
             title=self._build_personal_expense_title(payload),
             payload=payload,
         ).as_tool_output()
+
+    def upsert_attendance_draft(self, raw_args: dict[str, Any]) -> dict[str, Any]:
+        args = AttendanceDraftUpsertInput.model_validate(raw_args)
+        draft_patch: dict[str, Any] = {
+            "days": [self._normalize_attendance_item(item) for item in args.days],
+        }
+        if args.year is not None:
+            draft_patch["year"] = args.year
+        if args.month is not None:
+            draft_patch["month"] = args.month
+        if args.employee is not None:
+            draft_patch["employee"] = self._merge_employee_defaults(args.employee)
+        if args.paid_leave_balance is not None:
+            draft_patch["paid_leave_balance"] = args.paid_leave_balance
+        return self._upsert_template_draft(
+            template_type="attendance",
+            mode=args.mode,
+            draft_patch=draft_patch,
+            pending_questions=args.pending_questions,
+        )
 
     def _merge_employee_defaults(self, employee: EmployeeInput | None) -> dict[str, Any]:
         values = employee.model_dump(exclude_none=True) if employee else {}
@@ -641,6 +719,59 @@ class ExcelToolService:
         if "is_round_trip" not in values or values["is_round_trip"] is None:
             values["is_round_trip"] = False
         return values
+
+    def _upsert_template_draft(
+        self,
+        *,
+        template_type: str,
+        mode: str,
+        draft_patch: dict[str, Any],
+        pending_questions: list[str],
+    ) -> dict[str, Any]:
+        run_state = self._draft_run_state.get()
+        if run_state is None:
+            raise RuntimeError("Draft run context is not set.")
+
+        cleaned_patch = {key: value for key, value in draft_patch.items() if value not in (None, [], {})}
+        result = run_state.store.upsert_draft(
+            thread_ts=run_state.thread_ts,
+            template_type=template_type,  # type: ignore[arg-type]
+            mode=mode,  # type: ignore[arg-type]
+            draft_patch=cleaned_patch,
+            pending_questions=pending_questions,
+        )
+        run_state.updated_templates.add(template_type)
+        if result.replaced_previous:
+            run_state.replacement_messages.append(
+                f"同じテンプレートの以前の草稿は最新版に置き換えました（{template_type}）。"
+            )
+
+        draft = result.snapshot["drafts_by_template"][template_type]
+        return {
+            "ok": True,
+            "title": "草稿状態を更新しました",
+            "template_type": template_type,
+            "status": draft["status"],
+            "pending_questions": draft["pending_questions"],
+            "replaced_previous": result.replaced_previous,
+            "canonical_state": draft["canonical_state"],
+            "ready_to_generate": self.is_template_ready(template_type, draft["canonical_state"]),
+        }
+
+    def is_template_ready(self, template_type: str, canonical_state: dict[str, Any]) -> bool:
+        try:
+            if template_type == "transport":
+                TransportSheetInput.model_validate(canonical_state)
+                return True
+            if template_type == "personal_expense":
+                PersonalExpenseSheetInput.model_validate(canonical_state)
+                return True
+            if template_type == "attendance":
+                AttendanceSheetInput.model_validate(canonical_state)
+                return True
+        except Exception:
+            return False
+        return False
 
     @staticmethod
     def _normalize_missing_expense_fields(values: dict[str, Any]) -> list[str]:
